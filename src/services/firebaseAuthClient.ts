@@ -135,12 +135,10 @@ export async function registerAccountWithEmail(params: {
   username: string;
   email: string;
   password: string;
-  secondaryPassword: string;
 }): Promise<AuthActionResult> {
   const username = params.username.trim();
   const email = params.email.trim();
   const password = params.password;
-  const secondaryPassword = params.secondaryPassword;
 
   if (!/^[a-zA-Z0-9_]{4,14}$/.test(username)) {
     return { ok: false, error: 'INVALID_USERNAME' };
@@ -150,9 +148,6 @@ export async function registerAccountWithEmail(params: {
   }
   if (password.length < 6 || password.length > 20) {
     return { ok: false, error: 'INVALID_PASSWORD' };
-  }
-  if (secondaryPassword.length < 4 || secondaryPassword.length > 20 || secondaryPassword === password) {
-    return { ok: false, error: 'INVALID_SECONDARY_PASSWORD' };
   }
 
   const apiKey = getApiKey();
@@ -197,7 +192,6 @@ export async function registerAccountWithEmail(params: {
     }
 
     const passwordHash = await sha256Hex(`dr-online:${password}`);
-    const secondaryPasswordHash = await sha256Hex(`dr-online-sec:${secondaryPassword}`);
 
     // Nation is intentionally 0 here: the player chooses their nation in-game when creating a character.
     await saveAccountRecord(username, {
@@ -206,7 +200,6 @@ export async function registerAccountWithEmail(params: {
       uid,
       emailVerified: false,
       passwordHash,
-      secondaryPasswordHash,
       nation: 0,
       createdAt: new Date().toISOString(),
       characters: [null, null, null, null]
@@ -352,6 +345,159 @@ export async function requestPasswordReset(emailRaw: string): Promise<{ ok: bool
     if (!res.ok) {
       return { ok: false, error: data?.error?.message || 'RESET_FAILED' };
     }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'NETWORK_ERROR' };
+  }
+}
+
+export async function updateAccountEmail(params: {
+  accountId: string;
+  currentEmail: string;
+  currentPassword: string;
+  newEmail: string;
+}): Promise<{ ok: boolean; error?: string; verificationPending?: boolean; newEmail?: string }> {
+  const newEmail = params.newEmail.trim();
+  if (!newEmail || !newEmail.includes('@')) {
+    return { ok: false, error: 'INVALID_EMAIL' };
+  }
+  if (!params.currentPassword) {
+    return { ok: false, error: 'MISSING_CREDENTIALS' };
+  }
+  const apiKey = getApiKey();
+  if (!apiKey) return { ok: false, error: 'FIREBASE_API_KEY_MISSING' };
+
+  try {
+    // Re-authenticate to get a fresh idToken
+    const signInRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: params.currentEmail,
+          password: params.currentPassword,
+          returnSecureToken: true
+        })
+      }
+    );
+    const signInData = await signInRes.json();
+    if (!signInRes.ok) {
+      return { ok: false, error: 'WRONG_PASSWORD' };
+    }
+    const idToken: string = signInData.idToken;
+
+    // Try direct update first
+    const updateRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:update?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idToken,
+          email: newEmail,
+          returnSecureToken: true
+        })
+      }
+    );
+    const updateData = await updateRes.json();
+
+    if (!updateRes.ok) {
+      const code = String(updateData?.error?.message || '');
+      if (code.includes('EMAIL_EXISTS')) return { ok: false, error: 'EMAIL_EXISTS' };
+      if (code.includes('INVALID_EMAIL')) return { ok: false, error: 'INVALID_EMAIL' };
+      // Firebase projects with Email Enumeration Protection require VERIFY_AND_CHANGE_EMAIL
+      if (code.includes('OPERATION_NOT_ALLOWED')) {
+        const verifyChangeRes = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              requestType: 'VERIFY_AND_CHANGE_EMAIL',
+              idToken,
+              newEmail
+            })
+          }
+        );
+        const verifyChangeData = await verifyChangeRes.json();
+        if (!verifyChangeRes.ok) {
+          const vCode = String(verifyChangeData?.error?.message || '');
+          if (vCode.includes('EMAIL_EXISTS')) return { ok: false, error: 'EMAIL_EXISTS' };
+          return { ok: false, error: vCode || 'EMAIL_UPDATE_FAILED' };
+        }
+        await patchAccountRecord(params.accountId, { email: newEmail });
+        return { ok: true, verificationPending: true, newEmail };
+      }
+      return { ok: false, error: code || 'EMAIL_UPDATE_FAILED' };
+    }
+
+    // Update succeeded directly: send verification link to the new email and update RTDB
+    if (updateData.idToken) {
+      await sendVerificationEmail(updateData.idToken).catch(() => {});
+    }
+    await patchAccountRecord(params.accountId, { email: newEmail });
+    return { ok: true, verificationPending: false, newEmail };
+  } catch {
+    return { ok: false, error: 'NETWORK_ERROR' };
+  }
+}
+
+export async function updateAccountPassword(params: {
+  accountId: string;
+  currentEmail: string;
+  currentPassword: string;
+  newPassword: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!params.currentPassword) {
+    return { ok: false, error: 'MISSING_CREDENTIALS' };
+  }
+  if (params.newPassword.length < 6 || params.newPassword.length > 20) {
+    return { ok: false, error: 'INVALID_PASSWORD' };
+  }
+  const apiKey = getApiKey();
+  if (!apiKey) return { ok: false, error: 'FIREBASE_API_KEY_MISSING' };
+
+  try {
+    const signInRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: params.currentEmail,
+          password: params.currentPassword,
+          returnSecureToken: true
+        })
+      }
+    );
+    const signInData = await signInRes.json();
+    if (!signInRes.ok) {
+      return { ok: false, error: 'WRONG_PASSWORD' };
+    }
+    const idToken: string = signInData.idToken;
+
+    const updateRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:update?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idToken,
+          password: params.newPassword,
+          returnSecureToken: true
+        })
+      }
+    );
+    const updateData = await updateRes.json();
+    if (!updateRes.ok) {
+      const code = String(updateData?.error?.message || '');
+      if (code.includes('WEAK_PASSWORD')) return { ok: false, error: 'INVALID_PASSWORD' };
+      return { ok: false, error: code || 'PASSWORD_UPDATE_FAILED' };
+    }
+
+    const passwordHash = await sha256Hex(`dr-online:${params.newPassword}`);
+    await patchAccountRecord(params.accountId, { passwordHash });
     return { ok: true };
   } catch {
     return { ok: false, error: 'NETWORK_ERROR' };

@@ -2367,19 +2367,13 @@ void StartMenuSubProcessType(SMENU *SubMenu )
 															}
 														case MN_OKCANCEL_MESSAGEBOX :
 															{
-																// 020925 YGI
-												/*#ifdef CHINA_LOCALIZING_		// 중국에서는 아직 delete 메뉴를 사용하지 않는다.
+																// Direct character deletion without secondary password prompt
 																if(TRUE == SendDeleteCharacter( LoadCh[ character_active ].sCharacterName, "temp" ) )
 																{
 																	memset( &LoadCh[ character_active ], 0, sizeof( SCharacter ) );
 																}
 																SCharSource = LoadCh[ character_active ];
 																break;
-												#else
-												*///021011 lsw
-																CallDelCharComform();//020802 lsw
-																goto Label_2;
-//												#endif
 															}
 														case MN_LOGIN :	if( SubMenu->key == 100 )		// 홈페이지로 이동//020822 lsw
 																		{

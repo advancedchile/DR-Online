@@ -137,9 +137,10 @@ export function App() {
 
     if (!window.Module) {
       const cacheBust = Date.now();
+      const baseUrl = import.meta.env.BASE_URL || '/';
       window.Module = {
         canvas: canvasRef.current,
-        locateFile: (file: string) => `/wasm/${file}?v=${cacheBust}`,
+        locateFile: (file: string) => `${baseUrl}wasm/${file}?v=${cacheBust}`,
         print: (text: string) => {
           console.log('[DR-WASM]', text);
         },
@@ -152,13 +153,13 @@ export function App() {
       };
 
       const script = document.createElement('script');
-      script.src = `/wasm/dragonraja.js?v=${cacheBust}`;
+      script.src = `${baseUrl}wasm/dragonraja.js?v=${cacheBust}`;
       script.async = true;
       script.onload = () => {
         if (mounted) setStatus('');
       };
       script.onerror = () => {
-        if (mounted) setStatus('Failed to load /wasm/dragonraja.js');
+        if (mounted) setStatus(`Failed to load ${baseUrl}wasm/dragonraja.js`);
       };
       document.body.appendChild(script);
     } else {

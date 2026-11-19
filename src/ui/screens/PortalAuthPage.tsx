@@ -6,7 +6,9 @@ import {
   PortalAccount,
   registerAccountWithEmail,
   requestPasswordReset,
-  sendVerificationEmail
+  sendVerificationEmail,
+  updateAccountEmail,
+  updateAccountPassword
 } from '../../services/firebaseAuthClient';
 import '../../styles/dr-portal.css';
 
@@ -145,6 +147,17 @@ const TEXT = {
     accountSub: 'Your email is verified and your account is ready to play.',
     accountCharacters: 'Characters',
     noCharacters: 'You have no characters yet. Launch the game to create your first character and choose your nation (Vyseus, Zypern, or Yllse).',
+    editEmailTitle: 'Change Email Address',
+    newEmailLabel: 'New email address',
+    currentPasswordLabel: 'Current password',
+    saveEmailBtn: 'Update Email',
+    emailUpdatedDirect: 'Your email address has been updated. Please verify the new address from your inbox.',
+    emailUpdatedPending: 'We sent a confirmation link to your new email address. Click it to complete the email change.',
+    editPasswordTitle: 'Change Password',
+    newPasswordLabel: 'New password',
+    confirmNewPasswordLabel: 'Confirm new password',
+    savePasswordBtn: 'Update Password',
+    passwordUpdatedMsg: 'Your password has been updated successfully.',
     rulesTitle: 'Server Rules',
     rulesSub: 'Please respect the community and play fairly.',
     rulesList: [
@@ -231,6 +244,17 @@ const TEXT = {
     accountSub: 'Tu correo está verificado y tu cuenta está lista para jugar.',
     accountCharacters: 'Personajes',
     noCharacters: 'Todavía no tienes personajes creados. Entra al juego para crear tu primer personaje y elegir tu nación (Vyseus, Zypern o Yllse).',
+    editEmailTitle: 'Cambiar Correo Electrónico',
+    newEmailLabel: 'Nuevo correo electrónico',
+    currentPasswordLabel: 'Contraseña actual',
+    saveEmailBtn: 'Actualizar Correo',
+    emailUpdatedDirect: 'Tu correo electrónico fue actualizado. Te enviamos un enlace para confirmar la nueva dirección.',
+    emailUpdatedPending: 'Te enviamos un correo de confirmación a tu nueva dirección. Haz clic en el enlace para completar el cambio.',
+    editPasswordTitle: 'Cambiar Contraseña',
+    newPasswordLabel: 'Nueva contraseña',
+    confirmNewPasswordLabel: 'Confirmar nueva contraseña',
+    savePasswordBtn: 'Actualizar Contraseña',
+    passwordUpdatedMsg: 'Tu contraseña se actualizó correctamente.',
     rulesTitle: 'Reglas del Servidor',
     rulesSub: 'Respeta a la comunidad y juega de forma limpia.',
     rulesList: [
@@ -272,8 +296,6 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
   const t = TEXT[lang];
   const baseUrl = import.meta.env.BASE_URL || '/';
   const img = (name: string) => `${baseUrl}portal-images/${name}`;
-  const isGitHubHosted =
-    typeof window !== 'undefined' && window.location.hostname.endsWith('github.io');
 
   const [account, setAccount] = useState<PortalAccount | null>(() => {
     try {
@@ -294,9 +316,20 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
   const [regUser, setRegUser] = useState('');
   const [regPass, setRegPass] = useState('');
   const [regPassConfirm, setRegPassConfirm] = useState('');
-  const [regSecPass, setRegSecPass] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regTerms, setRegTerms] = useState(false);
+
+  // Account edit forms (email & password)
+  const [editEmailCurrentPass, setEditEmailCurrentPass] = useState('');
+  const [editEmailNew, setEditEmailNew] = useState('');
+  const [editEmailMsg, setEditEmailMsg] = useState<string | null>(null);
+  const [editEmailErr, setEditEmailErr] = useState<string | null>(null);
+
+  const [editPassCurrent, setEditPassCurrent] = useState('');
+  const [editPassNew, setEditPassNew] = useState('');
+  const [editPassConfirm, setEditPassConfirm] = useState('');
+  const [editPassMsg, setEditPassMsg] = useState<string | null>(null);
+  const [editPassErr, setEditPassErr] = useState<string | null>(null);
 
   // Forgot password
   const [forgotEmail, setForgotEmail] = useState('');
@@ -335,8 +368,7 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
     const res = await registerAccountWithEmail({
       username: regUser,
       email: regEmail,
-      password: regPass,
-      secondaryPassword: regSecPass
+      password: regPass
     });
     setLoading(false);
 
@@ -349,7 +381,6 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
     setPendingVerifyToken(res.idToken || null);
     setRegPass('');
     setRegPassConfirm('');
-    setRegSecPass('');
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -418,6 +449,65 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
       // ignore
     }
     switchView('home');
+  };
+
+  const handleUpdateEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!account) return;
+    setEditEmailErr(null);
+    setEditEmailMsg(null);
+    setLoading(true);
+    const res = await updateAccountEmail({
+      accountId: account.id,
+      currentEmail: account.email,
+      currentPassword: editEmailCurrentPass,
+      newEmail: editEmailNew
+    });
+    setLoading(false);
+    if (!res.ok) {
+      setEditEmailErr(res.error || 'NETWORK_ERROR');
+      return;
+    }
+    const updated: PortalAccount = {
+      ...account,
+      email: res.newEmail || editEmailNew.trim()
+    };
+    setAccount(updated);
+    try {
+      sessionStorage.setItem('dr_portal_account', JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+    setEditEmailCurrentPass('');
+    setEditEmailNew('');
+    setEditEmailMsg(res.verificationPending ? t.emailUpdatedPending : t.emailUpdatedDirect);
+  };
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!account) return;
+    setEditPassErr(null);
+    setEditPassMsg(null);
+    if (editPassNew !== editPassConfirm) {
+      setEditPassErr('PASSWORD_MISMATCH');
+      return;
+    }
+    setLoading(true);
+    const res = await updateAccountPassword({
+      accountId: account.id,
+      currentEmail: account.email,
+      currentPassword: editPassCurrent,
+      newPassword: editPassNew
+    });
+    setLoading(false);
+    if (!res.ok) {
+      setEditPassErr(res.error || 'NETWORK_ERROR');
+      return;
+    }
+    setEditPassCurrent('');
+    setEditPassNew('');
+    setEditPassConfirm('');
+    setEditPassMsg(t.passwordUpdatedMsg);
   };
 
   const renderNavSections = () => (
@@ -976,27 +1066,6 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
 
                       <div style={{ marginBottom: 12 }}>
                         <label
-                          htmlFor="reg_sec_password"
-                          style={{ display: 'block', marginBottom: 4, fontSize: 14, color: '#e7c95e' }}
-                        >
-                          {t.secondaryPasswordLabel}
-                        </label>
-                        <input
-                          id="reg_sec_password"
-                          type="password"
-                          value={regSecPass}
-                          onChange={(e) => setRegSecPass(e.target.value)}
-                          maxLength={20}
-                          required
-                          className="dr-portal-input"
-                        />
-                        <p style={{ margin: '4px 0 0', fontSize: 12, color: '#a97f22' }}>
-                          {t.secondaryPasswordHint}
-                        </p>
-                      </div>
-
-                      <div style={{ marginBottom: 12 }}>
-                        <label
                           htmlFor="reg_email"
                           style={{ display: 'block', marginBottom: 4, fontSize: 14, color: '#e7c95e' }}
                         >
@@ -1262,15 +1331,13 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
                 )}
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                  {!isGitHubHosted && (
-                    <button
-                      type="button"
-                      onClick={() => onEnterGame(account.id)}
-                      className="dr-portal-submit"
-                    >
-                      {t.playBoxLaunch}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => onEnterGame(account.id)}
+                    className="dr-portal-submit"
+                  >
+                    {t.playBoxLaunch}
+                  </button>
                   <button
                     type="button"
                     onClick={handleSignOut}
@@ -1280,6 +1347,215 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
                     {t.navSignOut}
                   </button>
                 </div>
+              </div>
+
+              {/* Edit Email Section */}
+              <div
+                style={{
+                  marginTop: 16,
+                  border: '1px solid #3e2a0c',
+                  backgroundColor: '#180c00'
+                }}
+              >
+                <h2
+                  className="dr-portal-font-display"
+                  style={{
+                    margin: 0,
+                    borderBottom: '1px solid #3e2a0c',
+                    backgroundColor: '#0e0300',
+                    padding: '8px 16px',
+                    fontSize: 14,
+                    letterSpacing: '0.05em',
+                    color: '#e7c95e',
+                    textTransform: 'uppercase',
+                    fontWeight: 500
+                  }}
+                >
+                  {t.editEmailTitle}
+                </h2>
+                <form onSubmit={handleUpdateEmail} style={{ padding: '14px 16px', maxWidth: 448 }}>
+                  <div style={{ marginBottom: 12 }}>
+                    <label
+                      htmlFor="edit_email_new"
+                      style={{ display: 'block', marginBottom: 4, fontSize: 14, color: '#e7c95e' }}
+                    >
+                      {t.newEmailLabel}
+                    </label>
+                    <input
+                      id="edit_email_new"
+                      type="email"
+                      value={editEmailNew}
+                      onChange={(e) => setEditEmailNew(e.target.value)}
+                      maxLength={60}
+                      required
+                      className="dr-portal-input"
+                    />
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label
+                      htmlFor="edit_email_pass"
+                      style={{ display: 'block', marginBottom: 4, fontSize: 14, color: '#e7c95e' }}
+                    >
+                      {t.currentPasswordLabel}
+                    </label>
+                    <input
+                      id="edit_email_pass"
+                      type="password"
+                      value={editEmailCurrentPass}
+                      onChange={(e) => setEditEmailCurrentPass(e.target.value)}
+                      maxLength={20}
+                      required
+                      className="dr-portal-input"
+                    />
+                  </div>
+
+                  {editEmailErr && (
+                    <div
+                      style={{
+                        marginBottom: 12,
+                        border: '1px solid #e05a2b',
+                        backgroundColor: '#1e0904',
+                        padding: '8px 12px',
+                        fontSize: 13,
+                        color: '#f2a58a'
+                      }}
+                    >
+                      {t.errors[editEmailErr] || editEmailErr}
+                    </div>
+                  )}
+
+                  {editEmailMsg && (
+                    <div
+                      style={{
+                        marginBottom: 12,
+                        border: '1px solid #31af00',
+                        backgroundColor: '#0c1c05',
+                        padding: '8px 12px',
+                        fontSize: 13,
+                        color: '#9ee880'
+                      }}
+                    >
+                      {editEmailMsg}
+                    </div>
+                  )}
+
+                  <button type="submit" disabled={loading} className="dr-portal-submit">
+                    {loading ? t.processing : t.saveEmailBtn}
+                  </button>
+                </form>
+              </div>
+
+              {/* Edit Password Section */}
+              <div
+                style={{
+                  marginTop: 16,
+                  border: '1px solid #3e2a0c',
+                  backgroundColor: '#180c00'
+                }}
+              >
+                <h2
+                  className="dr-portal-font-display"
+                  style={{
+                    margin: 0,
+                    borderBottom: '1px solid #3e2a0c',
+                    backgroundColor: '#0e0300',
+                    padding: '8px 16px',
+                    fontSize: 14,
+                    letterSpacing: '0.05em',
+                    color: '#e7c95e',
+                    textTransform: 'uppercase',
+                    fontWeight: 500
+                  }}
+                >
+                  {t.editPasswordTitle}
+                </h2>
+                <form onSubmit={handleUpdatePassword} style={{ padding: '14px 16px', maxWidth: 448 }}>
+                  <div style={{ marginBottom: 12 }}>
+                    <label
+                      htmlFor="edit_pass_current"
+                      style={{ display: 'block', marginBottom: 4, fontSize: 14, color: '#e7c95e' }}
+                    >
+                      {t.currentPasswordLabel}
+                    </label>
+                    <input
+                      id="edit_pass_current"
+                      type="password"
+                      value={editPassCurrent}
+                      onChange={(e) => setEditPassCurrent(e.target.value)}
+                      maxLength={20}
+                      required
+                      className="dr-portal-input"
+                    />
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label
+                      htmlFor="edit_pass_new"
+                      style={{ display: 'block', marginBottom: 4, fontSize: 14, color: '#e7c95e' }}
+                    >
+                      {t.newPasswordLabel}
+                    </label>
+                    <input
+                      id="edit_pass_new"
+                      type="password"
+                      value={editPassNew}
+                      onChange={(e) => setEditPassNew(e.target.value)}
+                      maxLength={20}
+                      required
+                      className="dr-portal-input"
+                    />
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label
+                      htmlFor="edit_pass_confirm"
+                      style={{ display: 'block', marginBottom: 4, fontSize: 14, color: '#e7c95e' }}
+                    >
+                      {t.confirmNewPasswordLabel}
+                    </label>
+                    <input
+                      id="edit_pass_confirm"
+                      type="password"
+                      value={editPassConfirm}
+                      onChange={(e) => setEditPassConfirm(e.target.value)}
+                      maxLength={20}
+                      required
+                      className="dr-portal-input"
+                    />
+                  </div>
+
+                  {editPassErr && (
+                    <div
+                      style={{
+                        marginBottom: 12,
+                        border: '1px solid #e05a2b',
+                        backgroundColor: '#1e0904',
+                        padding: '8px 12px',
+                        fontSize: 13,
+                        color: '#f2a58a'
+                      }}
+                    >
+                      {t.errors[editPassErr] || editPassErr}
+                    </div>
+                  )}
+
+                  {editPassMsg && (
+                    <div
+                      style={{
+                        marginBottom: 12,
+                        border: '1px solid #31af00',
+                        backgroundColor: '#0c1c05',
+                        padding: '8px 12px',
+                        fontSize: 13,
+                        color: '#9ee880'
+                      }}
+                    >
+                      {editPassMsg}
+                    </div>
+                  )}
+
+                  <button type="submit" disabled={loading} className="dr-portal-submit">
+                    {loading ? t.processing : t.savePasswordBtn}
+                  </button>
+                </form>
               </div>
             </>
           )}
@@ -1332,17 +1608,15 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
                     </li>
                   </>
                 )}
-                {!isGitHubHosted && (
-                  <li>
-                    <button
-                      type="button"
-                      onClick={() => onEnterGame(account?.id || '')}
-                      className="dr-portal-link"
-                    >
-                      {t.playBoxLaunch}
-                    </button>
-                  </li>
-                )}
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => onEnterGame(account?.id || '')}
+                    className="dr-portal-link"
+                  >
+                    {t.playBoxLaunch}
+                  </button>
+                </li>
               </ul>
             </div>
           </section>

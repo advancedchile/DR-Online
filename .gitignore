@@ -1,0 +1,10 @@
+node_modules/
+dist/
+emsdk/
+original_sources/
+wasm_client/obj/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+wasm_accounts_db.json

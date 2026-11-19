@@ -45,7 +45,7 @@ const int CHAT_DELAY_TYPE_DEFAULT_PC	= 40;
 
 const int	MAX_CHAT_STRING_				= 150 ;//020515 lsw
 const int	MAX_CHAT_COUNT					= 10;//채팅 라인의 최대 라인수
-const int	MAX_DISPLAY_CHAT_WIDTH_BY_PIXEL	= 410;
+const int	MAX_DISPLAY_CHAT_WIDTH_BY_PIXEL	= 370;
 const int	MAX_CHAT_DISPLAY_TIME			= 30000;//화면에 보일 수 있는 시간.
 const int	MAX_CHAT_STAY_TIME				= 60000;//화면에는 보이지 않지만 기록이 남아있을 시간,
 

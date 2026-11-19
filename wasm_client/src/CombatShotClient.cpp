@@ -167,6 +167,11 @@ void CombatShotReceive(unsigned command, const void* data, size_t size)
 }
 uint64_t CombatShotTake(unsigned caster, unsigned target, int effect)
 {
+#ifdef __EMSCRIPTEN__
+    if (!Hero || caster != Hero->id) return 0;
+    static uint64_t s_wasmShotId = 1;
+    return ++s_wasmShotId;
+#endif
     if (!Hero || caster != Hero->id || !CombatShotReady()) return 0;
     if (DragonCombatShot::IsMagicArrow(effect)) return state.Take(target, g_ClientTime, unsigned(effect));
     switch (effect)
@@ -179,6 +184,11 @@ uint64_t CombatShotTake(unsigned caster, unsigned target, int effect)
 }
 uint64_t CombatShotTakeBurst(unsigned caster, unsigned target, unsigned skill)
 {
+#ifdef __EMSCRIPTEN__
+    if (!Hero || caster != Hero->id) return 0;
+    static uint64_t s_wasmBurstId = 1;
+    return ++s_wasmBurstId;
+#endif
     if (!Hero || caster != Hero->id || !CombatShotReady()) return 0;
     return state.TakeBurst(target, skill, g_ClientTime);
 }
@@ -192,10 +202,26 @@ unsigned CombatShotBurstCount(uint64_t batch, unsigned skill)
 }
 uint64_t CombatShotTakePart(uint64_t batch, unsigned part, unsigned count)
 {
+#ifdef __EMSCRIPTEN__
+    if (!Hero || !batch) return 0;
+    static uint64_t s_wasmPartId = 1;
+    return ++s_wasmPartId;
+#endif
     return Hero && CombatShotReady() ? state.TakePart(batch, part, count, g_ClientTime) : 0;
 }
 void CombatShotSendHit(uint64_t action, unsigned target, int x, int y, bool wanted)
 {
+#ifdef __EMSCRIPTEN__
+    if (target > UINT16_MAX || x < 0 || y < 0 || x > INT16_MAX || y > INT16_MAX) return;
+    t_packet packet = {};
+    packet.h.header.type = CMD_THROW_RESULT;
+    packet.h.header.size = sizeof(t_client_throw_result);
+    packet.u.strike.client_throw_result.idTarget = WORD(target);
+    packet.u.strike.client_throw_result.nX = __int16(x);
+    packet.u.strike.client_throw_result.nY = __int16(y);
+    packet.u.strike.client_throw_result.bWanted = wanted;
+    QueuePacket(&packet, 1);
+#else
     using namespace DragonCombatShot;
     if (!CombatShotReady() || !action || target > UINT16_MAX ||
         x < 0 || y < 0 || x > INT16_MAX || y > INT16_MAX) return;
@@ -204,4 +230,5 @@ void CombatShotSendHit(uint64_t action, unsigned target, int x, int y, bool want
     t_packet packet = {};
     DragonCombatShot::WritePacket(packet, HitCommand, hit);
     QueuePacket(&packet, 1);
+#endif
 }

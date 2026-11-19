@@ -380,6 +380,16 @@ extern "C" void dr_wasm_play_bgm(const char* path, int loop) {
 extern "C" void dr_wasm_stop_bgm(void) {
     js_stop_sound(201);
 }
+EM_JS(void, js_open_help_modal, (), {
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('dr-open-help'));
+    }
+});
+
+extern "C" void dr_wasm_open_help_modal(void) {
+    js_open_help_modal();
+}
+
 extern "C" int ijlInit(void*) { return 0; }
 extern "C" int ijlWrite(void*, int) { return 0; }
 extern "C" int ijlFree(void*) { return 0; }

@@ -970,13 +970,55 @@ export const wasmNetServer = new WasmNetServer(data0Manager);
 
 function createData0Middleware() {
   return (req: any, res: any, next: () => void) => {
-    if (!req.url || (!req.url.startsWith('/api/data0/') && !req.url.startsWith('/api/wasm-net'))) {
+    if (
+      !req.url ||
+      (!req.url.startsWith('/api/data0/') &&
+        !req.url.startsWith('/api/wasm-net') &&
+        !req.url.startsWith('/api/auth/'))
+    ) {
       return next();
     }
 
     try {
       const parsedUrl = new URL(req.url, 'http://localhost');
       const pathname = parsedUrl.pathname;
+
+      // 0. Web Portal Account Registration & Login API (backed by Firebase RTDB via wasmNetServer)
+      if (pathname.startsWith('/api/auth/')) {
+        if (pathname === '/api/auth/stats' && req.method === 'GET') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(JSON.stringify(wasmNetServer.getPortalStats()));
+          return;
+        }
+        if ((pathname === '/api/auth/register' || pathname === '/api/auth/login') && req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+          req.on('end', () => {
+            try {
+              const raw = Buffer.concat(chunks).toString('utf8');
+              const body = raw ? JSON.parse(raw) : {};
+              const result =
+                pathname === '/api/auth/register'
+                  ? wasmNetServer.registerAccount(body.username, body.email, body.password)
+                  : wasmNetServer.loginAccount(body.username, body.password);
+              res.statusCode = result.ok ? 200 : 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Cache-Control', 'no-store');
+              res.end(JSON.stringify(result));
+            } catch {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: false, error: 'INVALID_JSON' }));
+            }
+          });
+          return;
+        }
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
 
       // 0a. WebAssembly C++ Client Network Socket Bridge: /api/wasm-net
       if (pathname === '/api/wasm-net') {

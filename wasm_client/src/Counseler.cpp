@@ -649,6 +649,10 @@ void ViewTipsMenu( void )
 }		
 		
 		
+#ifdef __EMSCRIPTEN__
+extern "C" void dr_wasm_open_help_modal(void);
+#endif
+
 // 0818 khs
 int ViewTipsCheck( void )
 {		
@@ -691,11 +695,18 @@ int ViewTipsCheck( void )
 	{			
 		if( BoxAndDotCrash( 0,0, 80, 20, g_pointMouseX, g_pointMouseY ) )
 		{		
+#ifdef __EMSCRIPTEN__
+			dr_wasm_open_help_modal();
+			PlayListAutoSounds( 489, 0, 0, 0 );
+			YouCanHeroActionProc =0;
+			return 1;
+#else
 			ViewTipsLoad( ViewTipsCount );
 			ViewTipsFlag = 1;
 			PlayListAutoSounds( 489, 0, 0, 0 );
 			YouCanHeroActionProc =0;
 			return 1;
+#endif
 		}		
 	}			
 				

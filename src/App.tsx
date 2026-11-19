@@ -1,4 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { GuideLang } from './data/helpGuideContent';
+import { HelpGuideModal } from './ui/windows/HelpGuideModal';
+import { PortalAuthPage } from './ui/screens/PortalAuthPage';
 
 declare global {
   interface Window {
@@ -94,9 +97,42 @@ const CODE_TO_DIK: Record<string, number> = {
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [mode, setMode] = useState<'portal' | 'game'>('portal');
+  const [lang, setLang] = useState<GuideLang>(() => {
+    try {
+      const saved = localStorage.getItem('dr_ui_lang');
+      return saved === 'en' ? 'en' : 'es';
+    } catch {
+      return 'es';
+    }
+  });
+  const [helpOpen, setHelpOpen] = useState<boolean>(false);
+  const helpOpenRef = useRef<boolean>(false);
   const [status, setStatus] = useState<string>('Initializing Dragon Raja C++ WebAssembly Engine...');
 
+  const handleChangeLang = (nextLang: GuideLang) => {
+    setLang(nextLang);
+    try {
+      localStorage.setItem('dr_ui_lang', nextLang);
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
+    helpOpenRef.current = helpOpen;
+  }, [helpOpen]);
+
+  useEffect(() => {
+    const onOpenHelp = () => setHelpOpen(true);
+    window.addEventListener('dr-open-help', onOpenHelp);
+    return () => {
+      window.removeEventListener('dr-open-help', onOpenHelp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (mode !== 'game') return;
     let mounted = true;
 
     if (!window.Module) {
@@ -143,6 +179,7 @@ export function App() {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (helpOpenRef.current) return;
       const mod = window.Module;
       if (!mod || typeof mod._wasm_on_key_event !== 'function') return;
 
@@ -177,6 +214,7 @@ export function App() {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (helpOpenRef.current) return;
       const mod = window.Module;
       if (!mod || typeof mod._wasm_on_key_event !== 'function') return;
       const vk = e.keyCode || e.which || 0;
@@ -186,6 +224,7 @@ export function App() {
 
     const canvas = canvasRef.current;
     const onMouseMove = (e: MouseEvent) => {
+      if (helpOpenRef.current) return;
       const mod = window.Module;
       if (!mod || typeof mod._wasm_on_mouse_move !== 'function') return;
       const { x, y } = getCanvasCoords(e);
@@ -193,6 +232,7 @@ export function App() {
     };
 
     const onMouseDown = (e: MouseEvent) => {
+      if (helpOpenRef.current) return;
       canvas?.focus();
       const mod = window.Module;
       if (!mod || typeof mod._wasm_on_mouse_button !== 'function') return;
@@ -201,6 +241,7 @@ export function App() {
     };
 
     const onMouseUp = (e: MouseEvent) => {
+      if (helpOpenRef.current) return;
       const mod = window.Module;
       if (!mod || typeof mod._wasm_on_mouse_button !== 'function') return;
       const { x, y } = getCanvasCoords(e);
@@ -208,6 +249,7 @@ export function App() {
     };
 
     const onDblClick = (e: MouseEvent) => {
+      if (helpOpenRef.current) return;
       const mod = window.Module;
       if (!mod || typeof mod._wasm_on_mouse_button !== 'function') return;
       const { x, y } = getCanvasCoords(e);
@@ -236,68 +278,91 @@ export function App() {
       canvas?.removeEventListener('dblclick', onDblClick);
       canvas?.removeEventListener('contextmenu', onContextMenu);
     };
-  }, []);
+  }, [mode]);
 
   return (
-    <div
-      style={{
-        width: '100vw',
-        height: '100vh',
-        margin: 0,
-        padding: 0,
-        backgroundColor: '#000',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-        userSelect: 'none'
-      }}
-    >
-      <div
-        id="dr-wasm-wrapper"
-        style={{
-          position: 'relative',
-          height: '100vh',
-          width: 'calc(100vh * 4 / 3)',
-          maxWidth: '100vw',
-          maxHeight: 'calc(100vw * 3 / 4)',
-          aspectRatio: '4 / 3'
-        }}
-      >
-        <canvas
-          id="dr-wasm-canvas"
-          ref={canvasRef}
-          width={800}
-          height={600}
-          tabIndex={0}
-          style={{
-            width: '100%',
-            height: '100%',
-            display: 'block',
-            outline: 'none',
-            cursor: 'none'
-          }}
+    <>
+      {mode === 'portal' ? (
+        <PortalAuthPage
+          lang={lang}
+          onChangeLang={handleChangeLang}
+          onOpenHelp={() => setHelpOpen(true)}
+          onEnterGame={() => setMode('game')}
         />
-        {status && (
+      ) : (
+        <div
+          style={{
+            width: '100vw',
+            height: '100vh',
+            margin: 0,
+            padding: 0,
+            backgroundColor: '#000',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+            userSelect: 'none'
+          }}
+        >
           <div
+            id="dr-wasm-wrapper"
             style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#d8c28a',
-              fontFamily: 'monospace',
-              fontSize: 14,
-              backgroundColor: 'rgba(0,0,0,0.75)',
-              pointerEvents: 'none'
+              position: 'relative',
+              height: '100vh',
+              width: 'calc(100vh * 4 / 3)',
+              maxWidth: '100vw',
+              maxHeight: 'calc(100vw * 3 / 4)',
+              aspectRatio: '4 / 3'
             }}
           >
-            {status}
+            <canvas
+              id="dr-wasm-canvas"
+              ref={canvasRef}
+              width={800}
+              height={600}
+              tabIndex={0}
+              style={{
+                width: '100%',
+                height: '100%',
+                display: 'block',
+                outline: 'none',
+                cursor: 'none'
+              }}
+            />
+            {status && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#d8c28a',
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  backgroundColor: 'rgba(0,0,0,0.75)',
+                  pointerEvents: 'none'
+                }}
+              >
+                {status}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+
+      <HelpGuideModal
+        open={helpOpen}
+        lang={lang}
+        onChangeLang={handleChangeLang}
+        onClose={() => {
+          setHelpOpen(false);
+          if (mode === 'game') {
+            canvasRef.current?.focus();
+          }
+        }}
+      />
+    </>
   );
 }
 

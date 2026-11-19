@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import originalSqlDb from '../data/originalSqlDatabase.json';
@@ -107,6 +108,9 @@ export interface WasmCharacterRecord {
 
 interface WasmAccountRecord {
   id: string;
+  email?: string;
+  passwordHash?: string;
+  createdAt?: string;
   nation: number;
   characters: Array<WasmCharacterRecord | null>; // 4 slots
 }
@@ -255,15 +259,65 @@ export class WasmNetServer {
   private dbFilePath: string;
   private data0: Data0ArchiveManager;
   private firebaseDb: FirebaseGameDb;
+  private levelMaxExp: number[] = [];
 
   constructor(data0: Data0ArchiveManager) {
     this.data0 = data0;
     this.dbFilePath = path.resolve(process.cwd(), 'wasm_accounts_db.json');
     this.firebaseDb = new FirebaseGameDb();
+    this.loadLevelExpTable();
     this.loadAccounts();
     if (this.firebaseDb.isEnabled()) {
       void this.initFirebaseSync();
     }
+  }
+
+  private loadLevelExpTable(): void {
+    try {
+      const raw = this.data0.readEntry('data/tables/levelexp.bin');
+      if (raw && raw.length > 200) {
+        const dec = Buffer.from(raw);
+        for (let i = 0; i < dec.length - 1; i++) {
+          dec[i] = (dec[i] - (100 + i)) & 0xff;
+        }
+        const maxLv = Math.min(200, Math.floor((dec.length - 1) / 100));
+        for (let lv = 0; lv < maxLv; lv++) {
+          this.levelMaxExp[lv] = dec.readInt32LE(lv * 100 + 4);
+        }
+      }
+    } catch {
+      // fallback handled in getLevelMaxExp
+    }
+  }
+
+  private getLevelMaxExp(level: number): number {
+    const val = this.levelMaxExp[level];
+    if (typeof val === 'number' && val > 0) return val;
+    return level <= 1 ? 259 : level * level * 300;
+  }
+
+  private grantExpAndCheckLevelUp(ch: WasmCharacterRecord, expGain: number, replies: Buffer[]): void {
+    if (expGain <= 0) return;
+    ch.exp = (ch.exp || 0) + expGain;
+
+    while (ch.level < 150 && ch.exp > this.getLevelMaxExp(ch.level)) {
+      ch.level += 1;
+      ch.reservedPoint += 10;
+      ch.maxHp += 18;
+      ch.hp = ch.maxHp;
+      const lvBuf = Buffer.alloc(48, 0);
+      lvBuf.writeUInt16LE(1, 0); // HeroServerID = 1
+      lvBuf.writeInt16LE(ch.reservedPoint, 2);
+      lvBuf.writeInt16LE(ch.level, 4);
+      lvBuf.writeInt32LE(ch.maxHp, 8);
+      replies.push(framePacket(CMD_LEVELUP_POINT, lvBuf));
+    }
+
+    const expBuf = Buffer.alloc(12, 0);
+    expBuf.writeInt16LE(21, 0); // EXP = 21
+    expBuf.writeUInt32LE(ch.exp >>> 0, 4);
+    replies.push(framePacket(CMD_CHAR_INFO_BASIC, expBuf));
+    this.saveAccounts();
   }
 
   private async initFirebaseSync(): Promise<void> {
@@ -654,6 +708,94 @@ export class WasmNetServer {
     }
 
     return packets;
+  }
+
+  private hashPassword(password: string): string {
+    return crypto.createHash('sha256').update(`dr-online:${password}`).digest('hex');
+  }
+
+  public getPortalStats(): { online: boolean; accountsCount: number; firebaseConnected: boolean } {
+    return {
+      online: true,
+      accountsCount: this.accounts.size,
+      firebaseConnected: this.firebaseDb.isEnabled()
+    };
+  }
+
+  private toPublicAccount(acc: WasmAccountRecord) {
+    const classNames = ['Warrior', 'Thief', 'Archer', 'Wizard', 'Priest'];
+    const nationNames: Record<number, string> = { 3: 'Vyseus', 4: 'Zypern', 6: 'Yllse' };
+    return {
+      id: acc.id,
+      email: acc.email || '',
+      nation: nationNames[acc.nation] || 'Vyseus',
+      createdAt: acc.createdAt || '',
+      characters: (acc.characters || [])
+        .filter((c): c is WasmCharacterRecord => Boolean(c))
+        .map((c) => ({
+          name: c.name,
+          level: c.level,
+          className: classNames[c.cla] || 'Warrior',
+          mapName: c.mapName
+        }))
+    };
+  }
+
+  public registerAccount(usernameRaw: string, emailRaw: string, passwordRaw: string): {
+    ok: boolean;
+    error?: string;
+    account?: ReturnType<WasmNetServer['toPublicAccount']>;
+  } {
+    const username = (usernameRaw || '').trim();
+    const email = (emailRaw || '').trim();
+    const password = (passwordRaw || '').trim();
+    if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
+      return { ok: false, error: 'INVALID_USERNAME' };
+    }
+    if (!email || !email.includes('@')) {
+      return { ok: false, error: 'INVALID_EMAIL' };
+    }
+    if (password.length < 4 || password.length > 20) {
+      return { ok: false, error: 'INVALID_PASSWORD' };
+    }
+    const key = username.toLowerCase();
+    if (this.accounts.has(key)) {
+      return { ok: false, error: 'USERNAME_EXISTS' };
+    }
+    const acc: WasmAccountRecord = {
+      id: username,
+      email,
+      passwordHash: this.hashPassword(password),
+      createdAt: new Date().toISOString(),
+      nation: 0,
+      characters: [null, null, null, null]
+    };
+    this.accounts.set(key, acc);
+    this.activeSession.userId = username;
+    this.saveAccounts();
+    return { ok: true, account: this.toPublicAccount(acc) };
+  }
+
+  public loginAccount(usernameRaw: string, passwordRaw: string): {
+    ok: boolean;
+    error?: string;
+    account?: ReturnType<WasmNetServer['toPublicAccount']>;
+  } {
+    const username = (usernameRaw || '').trim();
+    const password = (passwordRaw || '').trim();
+    if (!username || !password) {
+      return { ok: false, error: 'MISSING_CREDENTIALS' };
+    }
+    const key = username.toLowerCase();
+    const acc = this.accounts.get(key);
+    if (!acc) {
+      return { ok: false, error: 'ACCOUNT_NOT_FOUND' };
+    }
+    if (acc.passwordHash && acc.passwordHash !== this.hashPassword(password)) {
+      return { ok: false, error: 'WRONG_PASSWORD' };
+    }
+    this.activeSession.userId = acc.id;
+    return { ok: true, account: this.toPublicAccount(acc) };
   }
 
   public handleConnect(port: number): Buffer {
@@ -1111,16 +1253,8 @@ export class WasmNetServer {
         const evType = payload.readInt16LE(0);
         const evNo = payload.readInt16LE(2);
 
-        const emitDialogStep = (npcId: number, overheadMsg: string, boxMsg: string, hasMoreSteps: boolean) => {
-          const chatBytes = Buffer.from(overheadMsg, 'ascii');
-          const chatLen = Math.min(250, chatBytes.length);
-          const chatBuf = Buffer.alloc(4 + chatLen + 1, 0);
-          chatBuf.writeInt16LE(npcId, 0);
-          chatBuf.writeUInt8(0, 2); // CHATTYPE_NORMAL = 0
-          chatBuf.writeUInt8(chatLen, 3);
-          chatBytes.copy(chatBuf, 4, 0, chatLen);
-          replies.push(framePacket(CMD_CHAT_DATA, chatBuf));
-
+        const emitDialogStep = (_npcId: number, _overheadMsg: string, boxMsg: string, hasMoreSteps: boolean) => {
+          // Send only the TALK modal (CMD_SCRIPT_MESSAGE_BOX) without duplicating an overhead chat bubble / chat log entry
           // Prefix '\x01' tells RecvScriptMessageBox that clicking DONE should advance to the next step
           const taggedBox = hasMoreSteps ? `\x01${boxMsg}` : boxMsg;
           const msgBuf = Buffer.alloc(300, 0);
@@ -1568,30 +1702,7 @@ export class WasmNetServer {
           replies.push(framePacket(CMD_ATTACK_RESULT, atkBuf));
 
           if (dmg > 0) {
-            const expGain = nResult === 1 ? 120 : 45;
-            ch.exp = (ch.exp || 0) + expGain;
-
-            const lv2Exp: number[] = (originalSqlDb as any).lv2Exp || [];
-            const nextLvThreshold = lv2Exp[ch.level] || ch.level * 600;
-            if (ch.exp >= nextLvThreshold && ch.level < 150) {
-              ch.level += 1;
-              ch.reservedPoint += 10;
-              ch.maxHp += 18;
-              ch.hp = ch.maxHp;
-              const lvBuf = Buffer.alloc(48, 0);
-              lvBuf.writeUInt16LE(1, 0);
-              lvBuf.writeInt16LE(ch.reservedPoint, 2);
-              lvBuf.writeInt16LE(ch.level, 4);
-              lvBuf.writeInt32LE(ch.maxHp, 8);
-              replies.push(framePacket(CMD_LEVELUP_POINT, lvBuf));
-            }
-
-            // Live EXP bar update (CMD_CHAR_INFO_BASIC: short kind = 21 @ 0, DWORD data @ 4)
-            const expBuf = Buffer.alloc(12, 0);
-            expBuf.writeInt16LE(21, 0); // EXP = 21
-            expBuf.writeUInt32LE(ch.exp >>> 0, 4);
-            replies.push(framePacket(CMD_CHAR_INFO_BASIC, expBuf));
-            this.saveAccounts();
+            this.grantExpAndCheckLevelUp(ch, nResult === 1 ? 120 : 45, replies);
           }
         }
         break;
@@ -1634,6 +1745,28 @@ export class WasmNetServer {
             if (npc.hp <= 0) {
               npc.hp = 0;
               nResult = 1;
+              setTimeout(() => {
+                npc.hp = npc.maxHp;
+                const px = npc.tileX * 32 + 16;
+                const py = npc.tileY * 32 + 16;
+                const respawnBuf = Buffer.alloc(16, 0);
+                const w0 = ((px & 0x7fff) | ((py & 0x7fff) << 15)) >>> 0;
+                const isEv = npc.eventNo > 0 ? 1 : 0;
+                const w1 =
+                  ((npc.tileX & 0x3ff) |
+                    ((npc.tileY & 0x3ff) << 10) |
+                    ((npc.nSprNo & 0x1ff) << 20) |
+                    (isEv << 29) |
+                    (1 << 30)) >>>
+                  0;
+                const w2 = ((npc.idNpc & 0xffff) | ((npc.nNameNo & 0x1fff) << 16)) >>> 0;
+                const w3 = ((npc.nRace & 0x0f) << 8) >>> 0;
+                respawnBuf.writeUInt32LE(w0, 0);
+                respawnBuf.writeUInt32LE(w1, 4);
+                respawnBuf.writeUInt32LE(w2, 8);
+                respawnBuf.writeUInt32LE(w3, 12);
+                this.activeSession.pendingOutgoing.push(framePacket(CMD_NPC_ADD, respawnBuf));
+              }, 8000);
             }
           }
           // struct t_server_throw_result (16 bytes): WORD idTarget @ 0, int16 nX @ 2, int16 nY @ 4, 2-byte pad, int32 nDamage @ 8, WORD wdEffect @ 12, BYTE nCombat @ 14, BYTE nResult @ 15
@@ -1648,12 +1781,7 @@ export class WasmNetServer {
           replies.push(framePacket(CMD_THROW_RESULT, resBuf));
 
           if (dmg > 0) {
-            ch.exp = (ch.exp || 0) + (nResult === 1 ? 120 : 45);
-            const expBuf = Buffer.alloc(12, 0);
-            expBuf.writeInt16LE(21, 0);
-            expBuf.writeUInt32LE(ch.exp >>> 0, 4);
-            replies.push(framePacket(CMD_CHAR_INFO_BASIC, expBuf));
-            this.saveAccounts();
+            this.grantExpAndCheckLevelUp(ch, nResult === 1 ? 120 : 45, replies);
           }
         }
         break;

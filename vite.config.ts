@@ -3,7 +3,11 @@ import react from '@vitejs/plugin-react';
 import { dragonRajaData0Plugin } from './src/server/data0StreamPlugin';
 
 export default defineConfig({
-  plugins: [react(), dragonRajaData0Plugin()],
+  base: process.env.GITHUB_PAGES === 'true' ? '/DR-Online/' : '/',
+  plugins:
+    process.env.GITHUB_PAGES === 'true'
+      ? [react()]
+      : [react(), dragonRajaData0Plugin()],
   server: {
     host: true,
     port: 5188,

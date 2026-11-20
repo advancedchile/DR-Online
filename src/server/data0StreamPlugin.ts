@@ -542,7 +542,7 @@ export class Data0ArchiveManager {
     }
     const out = meta.method === 0 ? Buffer.from(raw) : zlib.inflateRawSync(raw);
 
-    if (this.decompressedCache.size > 180) {
+    if (this.decompressedCache.size > 400) {
       const firstKey = this.decompressedCache.keys().next().value;
       if (firstKey) this.decompressedCache.delete(firstKey);
     }
@@ -1295,7 +1295,7 @@ export function createData0Middleware() {
           res.statusCode = 200;
           res.setHeader('Content-Type', isWav ? 'audio/wav' : 'application/octet-stream');
           res.setHeader('Content-Length', String(buf.length));
-          res.setHeader('Cache-Control', 'public, max-age=3600');
+          res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
           res.end(buf);
         };
         if (data0Manager.isRemoteMode()) {

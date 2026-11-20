@@ -1587,6 +1587,7 @@ int LoadingGameData()
 			LoadCharSpriteData( "./char/001000.spr",  &CharBuf[1],  &CharBufLength[1], &CharSpr[1], LD_CHAR_SPRITE_ALL_LOAD);
 			LoadHeroClothAccessoryData( 104, 107 );
 			
+#ifndef __EMSCRIPTEN__
 			char tempfilename[FILENAME_MAX];
 			const int preloadcharsprite[21] = {29,30,37,38,46,72,79,1005,1006,1017,1018,1019,1020,1027,1028,1041,1060,1061,1075,1083,1092 };
 						
@@ -1597,6 +1598,7 @@ int LoadingGameData()
 				LoadCharSpriteData(tempfilename, &CharAccessoryBuf[tt/1000][tt%1000], &CharAccessoryBufLength[ tt/1000][tt%1000], &CharAccessorySpr[tt/1000][tt%1000], LD_CHAR_SPRITE_ALL_LOAD);
 				HandleRunning(&connections);
 			}
+#endif
 			
 			HandleRunning(&connections);
 			s_iLoadingPos = LGDS_STEP7;	
@@ -1695,7 +1697,16 @@ static void DrainWin32Messages()
 static void DragonWasmFrameTick()
 {
 	DWORD nowMs = ::timeGetTime();
-	if (nowMs - s_lastFrameTickMs < 60)
+	DWORD minFrameMs = 30; // ~33 FPS in-game
+	if (NowLoading)
+	{
+		minFrameMs = 0; // No artificial sleep between loading steps
+	}
+	else if (s_wasmRunState == WASM_STATE_MAIN_MENU_LOOP)
+	{
+		minFrameMs = 16; // ~60 FPS in login / character selection screens
+	}
+	if (minFrameMs > 0 && nowMs - s_lastFrameTickMs < minFrameMs)
 	{
 		return;
 	}

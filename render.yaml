@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: dr-online-server
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run start:server
+    healthCheckPath: /health
+    envVars:
+      - key: FIREBASE_DATABASE_URL
+        value: https://dr-online-fc60d-default-rtdb.firebaseio.com
+      - key: FIREBASE_PROJECT_ID
+        value: dr-online-fc60d
+      - key: DR_DATA0_URL
+        sync: false

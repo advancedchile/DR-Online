@@ -6,6 +6,7 @@ import { PortalAuthPage } from './ui/screens/PortalAuthPage';
 declare global {
   interface Window {
     Module?: any;
+    DR_API_BASE?: string;
   }
 }
 
@@ -138,6 +139,12 @@ export function App() {
     if (!window.Module) {
       const cacheBust = Date.now();
       const baseUrl = import.meta.env.BASE_URL || '/';
+      const configuredServer = ((import.meta.env.VITE_GAME_SERVER_URL as string | undefined) || '')
+        .trim()
+        .replace(/\/+$/, '');
+      if (configuredServer) {
+        window.DR_API_BASE = configuredServer;
+      }
       window.Module = {
         canvas: canvasRef.current,
         locateFile: (file: string) => `${baseUrl}wasm/${file}?v=${cacheBust}`,

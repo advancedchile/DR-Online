@@ -272,7 +272,7 @@ export class WasmNetServer {
     }
   }
 
-  private loadLevelExpTable(): void {
+  public loadLevelExpTable(): void {
     try {
       const raw = this.data0.readEntry('data/tables/levelexp.bin');
       if (raw && raw.length > 200) {

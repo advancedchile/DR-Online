@@ -8,13 +8,15 @@
     "dev": "vite --port 5188",
     "build": "tsc -b && vite build",
     "preview": "vite preview --port 5189",
-    "extract": "node tools/extract-data0.mjs"
+    "extract": "node tools/extract-data0.mjs",
+    "start:server": "tsx src/server/standaloneServer.ts"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "three": "^0.170.0"
+    "three": "^0.170.0",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

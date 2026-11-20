@@ -6,6 +6,7 @@ import { WasmNetServer } from './wasmNetServer';
 
 const DATA0_PATH =
   process.env.DR_DATA0_PATH || 'C:\\Program Files (x86)\\DragonRajaGlobal\\Live\\data\\data0';
+const DATA0_URL = (process.env.DR_DATA0_URL || '').trim();
 const LIVE_DIR = path.dirname(path.dirname(DATA0_PATH));
 
 // Exact 0..10 tilesheet table extracted from DragonRaja.exe VA 0x00A2BF68
@@ -204,7 +205,10 @@ function blitAnchored(
 }
 
 export class Data0ArchiveManager {
-  private zipBuf: Buffer | null = null;
+  private fd: number | null = null;
+  private fileSize = 0;
+  private initialized = false;
+  private remoteInitPromise: Promise<void> | null = null;
   private entries = new Map<string, ZipEntryMeta>();
   private entriesByBasename = new Map<string, string[]>();
   private objectById = new Map<number, string>();
@@ -213,20 +217,13 @@ export class Data0ArchiveManager {
   private mapBundleCache = new Map<string, { json: string; atlasPng: Buffer }>();
   private soundListBinCache: Buffer | null = null;
 
-  public ensureInitialized(): void {
-    if (this.zipBuf) return;
-    const buf = fs.readFileSync(DATA0_PATH);
-    this.zipBuf = buf;
+  public isRemoteMode(): boolean {
+    return Boolean(DATA0_URL) && !fs.existsSync(DATA0_PATH);
+  }
 
-    let eocd = buf.length - 22;
-    while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) {
-      eocd--;
-    }
-    const cdCount = buf.readUInt16LE(eocd + 10);
-    const cdOff = buf.readUInt32LE(eocd + 16);
-
-    let ptr = cdOff;
-    for (let i = 0; i < cdCount; i++) {
+  private parseCentralDirectory(buf: Buffer, cdCount: number): void {
+    let ptr = 0;
+    for (let i = 0; i < cdCount && ptr + 46 <= buf.length; i++) {
       const method = buf.readUInt16LE(ptr + 10);
       const cSize = buf.readUInt32LE(ptr + 20);
       const uSize = buf.readUInt32LE(ptr + 24);
@@ -247,7 +244,6 @@ export class Data0ArchiveManager {
       }
       list.push(lower);
 
-      // Index images/objects/legacy/<dir>/<id>.csp by numeric ID
       if (lower.startsWith('images/objects/legacy/') && lower.endsWith('.csp')) {
         const stem = base.replace('.csp', '');
         const num = Number(stem);
@@ -264,6 +260,91 @@ export class Data0ArchiveManager {
 
       ptr += 46 + nLen + xLen + cLen;
     }
+  }
+
+  private readLocalSlice(offset: number, length: number): Buffer {
+    if (this.fd === null) throw new Error('data0 fd not open');
+    const out = Buffer.allocUnsafe(length);
+    let readTotal = 0;
+    while (readTotal < length) {
+      const n = fs.readSync(this.fd, out, readTotal, length - readTotal, offset + readTotal);
+      if (n <= 0) break;
+      readTotal += n;
+    }
+    return readTotal === length ? out : out.subarray(0, readTotal);
+  }
+
+  private async fetchRemoteRange(start: number, endInclusive: number): Promise<Buffer> {
+    const res = await fetch(DATA0_URL, {
+      headers: { Range: `bytes=${start}-${endInclusive}` },
+      redirect: 'follow'
+    });
+    if (!res.ok && res.status !== 206) {
+      throw new Error(`Remote data0 range fetch failed: HTTP ${res.status}`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  public ensureInitialized(): void {
+    if (this.initialized) return;
+    if (!fs.existsSync(DATA0_PATH)) return;
+
+    this.fd = fs.openSync(DATA0_PATH, 'r');
+    this.fileSize = fs.fstatSync(this.fd).size;
+
+    const tailLen = Math.min(65557, this.fileSize);
+    const tail = this.readLocalSlice(this.fileSize - tailLen, tailLen);
+    let eocd = tail.length - 22;
+    while (eocd >= 0 && tail.readUInt32LE(eocd) !== 0x06054b50) {
+      eocd--;
+    }
+    if (eocd < 0) throw new Error('Invalid data0 ZIP: EOCD not found');
+
+    const cdCount = tail.readUInt16LE(eocd + 10);
+    const cdSize = tail.readUInt32LE(eocd + 12);
+    const cdOff = tail.readUInt32LE(eocd + 16);
+    const cdBuf = this.readLocalSlice(cdOff, cdSize);
+    this.parseCentralDirectory(cdBuf, cdCount);
+    this.initialized = true;
+  }
+
+  public async ensureInitializedAsync(): Promise<void> {
+    if (this.initialized) return;
+    if (!this.isRemoteMode()) {
+      this.ensureInitialized();
+      return;
+    }
+    if (this.remoteInitPromise) return this.remoteInitPromise;
+
+    this.remoteInitPromise = (async () => {
+      const headRes = await fetch(DATA0_URL, { method: 'HEAD', redirect: 'follow' });
+      const contentLen = Number(headRes.headers.get('content-length') || '0');
+      if (!contentLen || Number.isNaN(contentLen)) {
+        throw new Error(`Could not determine Content-Length for DR_DATA0_URL (${headRes.status})`);
+      }
+      this.fileSize = contentLen;
+
+      const tailLen = Math.min(65557, this.fileSize);
+      const tail = await this.fetchRemoteRange(this.fileSize - tailLen, this.fileSize - 1);
+      let eocd = tail.length - 22;
+      while (eocd >= 0 && tail.readUInt32LE(eocd) !== 0x06054b50) {
+        eocd--;
+      }
+      if (eocd < 0) throw new Error('Invalid remote data0 ZIP: EOCD not found');
+
+      const cdCount = tail.readUInt16LE(eocd + 10);
+      const cdSize = tail.readUInt32LE(eocd + 12);
+      const cdOff = tail.readUInt32LE(eocd + 16);
+      const cdBuf = await this.fetchRemoteRange(cdOff, cdOff + cdSize - 1);
+      this.parseCentralDirectory(cdBuf, cdCount);
+      this.initialized = true;
+
+      // Preload levelexp.bin into cache so wasmNetServer synchronous lookup works immediately
+      await this.readEntryAsync('data/tables/levelexp.bin').catch(() => {});
+      console.log(`[Data0] Remote index ready (${this.entries.size} entries from DR_DATA0_URL)`);
+    })();
+
+    return this.remoteInitPromise;
   }
 
   private getSoundListBin(): Buffer {
@@ -417,21 +498,148 @@ export class Data0ArchiveManager {
     if (cached) return cached;
 
     const meta = this.entries.get(clean);
-    if (!meta || !this.zipBuf) return null;
+    if (!meta || this.fd === null) return null;
 
-    const ln = this.zipBuf.readUInt16LE(meta.lOff + 26);
-    const lx = this.zipBuf.readUInt16LE(meta.lOff + 28);
+    const header = this.readLocalSlice(meta.lOff, 30);
+    const ln = header.readUInt16LE(26);
+    const lx = header.readUInt16LE(28);
     const dataStart = meta.lOff + 30 + ln + lx;
-    const raw = this.zipBuf.subarray(dataStart, dataStart + meta.cSize);
+    const raw = this.readLocalSlice(dataStart, meta.cSize);
     const out = meta.method === 0 ? Buffer.from(raw) : zlib.inflateRawSync(raw);
 
-    // Cache frequently accessed containers (.sou, .spr, .dat) up to 60 entries
-    if (this.decompressedCache.size > 60) {
+    if (this.decompressedCache.size > 120) {
       const firstKey = this.decompressedCache.keys().next().value;
       if (firstKey) this.decompressedCache.delete(firstKey);
     }
     this.decompressedCache.set(clean, out);
     return out;
+  }
+
+  public async readEntryAsync(pathKey: string): Promise<Buffer | null> {
+    if (!this.isRemoteMode()) {
+      return this.readEntry(pathKey);
+    }
+    await this.ensureInitializedAsync();
+    const clean = pathKey.replace(/^\/+/, '').toLowerCase();
+    const cached = this.decompressedCache.get(clean);
+    if (cached) return cached;
+
+    const meta = this.entries.get(clean);
+    if (!meta) return null;
+
+    const guessExtra = 256;
+    const endPos = Math.min(this.fileSize - 1, meta.lOff + 30 + guessExtra + meta.cSize - 1);
+    let chunk = await this.fetchRemoteRange(meta.lOff, endPos);
+    const ln = chunk.readUInt16LE(26);
+    const lx = chunk.readUInt16LE(28);
+    const relStart = 30 + ln + lx;
+    let raw: Buffer;
+    if (relStart + meta.cSize <= chunk.length) {
+      raw = chunk.subarray(relStart, relStart + meta.cSize);
+    } else {
+      const absStart = meta.lOff + relStart;
+      raw = await this.fetchRemoteRange(absStart, absStart + meta.cSize - 1);
+    }
+    const out = meta.method === 0 ? Buffer.from(raw) : zlib.inflateRawSync(raw);
+
+    if (this.decompressedCache.size > 180) {
+      const firstKey = this.decompressedCache.keys().next().value;
+      if (firstKey) this.decompressedCache.delete(firstKey);
+    }
+    this.decompressedCache.set(clean, out);
+    return out;
+  }
+
+  public async resolveRawClientFileAsync(relPath: string): Promise<Buffer | null> {
+    if (!this.isRemoteMode()) {
+      return this.resolveRawClientFile(relPath);
+    }
+    await this.ensureInitializedAsync();
+    const clean = relPath
+      .replace(/\\/g, '/')
+      .replace(/\/+/g, '/')
+      .replace(/^\.\//, '')
+      .replace(/^\/+/, '')
+      .trim()
+      .toLowerCase();
+    if (!clean) return null;
+
+    const base = clean.slice(clean.lastIndexOf('/') + 1);
+
+    if (base === 'beta.ini') return Buffer.from('0\n', 'utf8');
+    if (base === 'dragon.ini') {
+      return Buffer.from(
+        '[network]\nhost1=127.0.0.1\nhost2=127.0.0.1\n\n[server]\n0=DragonRaja\ncount=1\n\n[nation]\nnation=2\n\n[option]\nsound=1\nmusic=1\nmouse=100\nwhisper=1\nchat=1\nparty=1\n',
+        'utf8'
+      );
+    }
+    if (base === 'filter.txt') return Buffer.from('#\n', 'utf8');
+    if (base === 'condition_table.bin') return Buffer.alloc(258, 0);
+    if (base === 'soundlist.bin' || base === 'soundlist_eng.bin') return this.getSoundListBin();
+    if (base === 'menu_image.txt') return this.readEntryAsync('data/misc/en_menu_image.txt');
+    if (base === 'menustring.txt') return this.readEntryAsync('data/strings/english/en_menustring.txt');
+    if (base === 'quest.txt') return this.readEntryAsync('data/strings/english/en_quests.txt');
+    if (base === 'questpic.txt' || base === 'randomtalk.dat') return Buffer.from('', 'utf8');
+    if (base === 'questpic.bin') return Buffer.alloc(4, 0);
+
+    const direct = await this.readEntryAsync(clean);
+    if (direct) return direct;
+
+    if (clean.startsWith('itemdata/') || clean.includes('/bag/')) {
+      const hit = await this.readEntryAsync(`images/items/legacy/inventory/${base}`);
+      if (hit) return hit;
+    }
+    if (clean.startsWith('item/')) {
+      const hit = await this.readEntryAsync(`images/items/legacy/ground/${base}`);
+      if (hit) return hit;
+    }
+    if (clean.startsWith('object/')) {
+      const sub = clean.slice('object/'.length);
+      const hit = await this.readEntryAsync(`images/objects/legacy/${sub}`);
+      if (hit) return hit;
+    }
+    if (clean.startsWith('sound/') || clean.startsWith('sound_b5/')) {
+      const hit = await this.readEntryAsync(`sound/legacy/${base}`);
+      if (hit) return hit;
+    }
+    if (clean.startsWith('magic/')) {
+      const hit = await this.readEntryAsync(`images/ui/legacy/icons/magic/${base}`);
+      if (hit) return hit;
+    }
+    if (clean.startsWith('skill/')) {
+      const hit = await this.readEntryAsync(`images/ui/legacy/icons/skill/${base}`);
+      if (hit) return hit;
+    }
+    if (clean.startsWith('effect/es/')) {
+      const hit = await this.readEntryAsync(`images/effects/legacy/es/${base}`);
+      if (hit) return hit;
+    }
+    if (clean.startsWith('effect/')) {
+      const hit = await this.readEntryAsync(`images/effects/legacy/${base}`);
+      if (hit) return hit;
+    }
+    if (clean.startsWith('map/') || clean.startsWith('event/')) {
+      if (base.endsWith('.sou')) {
+        const hit = await this.readEntryAsync(`images/tilesheets/${base}`);
+        if (hit) return hit;
+      } else {
+        const dotIdx = base.lastIndexOf('.');
+        const stem = dotIdx > 0 ? base.slice(0, dotIdx) : base;
+        const hit = await this.readEntryAsync(`maps/${stem}/${base}`);
+        if (hit) return hit;
+      }
+    }
+
+    const candidates = this.entriesByBasename.get(base);
+    if (candidates && candidates.length > 0) {
+      const enCandidate =
+        candidates.find((c) => c.includes('/localized/en/') || c.includes('/english/')) ||
+        candidates[0];
+      const hit = await this.readEntryAsync(enCandidate);
+      if (hit) return hit;
+    }
+
+    return null;
   }
 
   public getContainerFrameOffsets(buf: Buffer): number[] {
@@ -968,7 +1176,7 @@ export class Data0ArchiveManager {
 export const data0Manager = new Data0ArchiveManager();
 export const wasmNetServer = new WasmNetServer(data0Manager);
 
-function createData0Middleware() {
+export function createData0Middleware() {
   return (req: any, res: any, next: () => void) => {
     if (
       !req.url ||
@@ -977,6 +1185,16 @@ function createData0Middleware() {
         !req.url.startsWith('/api/auth/'))
     ) {
       return next();
+    }
+
+    // Allow cross-origin requests from GitHub Pages (https://advancedchile.github.io)
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+      res.statusCode = 204;
+      res.end();
+      return;
     }
 
     try {
@@ -1061,18 +1279,30 @@ function createData0Middleware() {
       // 0b. Raw Client File Stream for WebAssembly C++ Engine: /api/data0/raw?path=./data/NewStartLoginMenu.dat
       if (pathname === '/api/data0/raw') {
         const reqPath = parsedUrl.searchParams.get('path') || '';
-        const buf = data0Manager.resolveRawClientFile(reqPath);
-        if (!buf) {
-          res.statusCode = 204;
-          res.end();
+        const sendRaw = (buf: Buffer | null) => {
+          if (!buf) {
+            res.statusCode = 204;
+            res.end();
+            return;
+          }
+          const isWav = reqPath.toLowerCase().endsWith('.wav');
+          res.statusCode = 200;
+          res.setHeader('Content-Type', isWav ? 'audio/wav' : 'application/octet-stream');
+          res.setHeader('Content-Length', String(buf.length));
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          res.end(buf);
+        };
+        if (data0Manager.isRemoteMode()) {
+          data0Manager
+            .resolveRawClientFileAsync(reqPath)
+            .then(sendRaw)
+            .catch(() => {
+              res.statusCode = 502;
+              res.end('Remote data0 fetch error');
+            });
           return;
         }
-        const isWav = reqPath.toLowerCase().endsWith('.wav');
-        res.statusCode = 200;
-        res.setHeader('Content-Type', isWav ? 'audio/wav' : 'application/octet-stream');
-        res.setHeader('Content-Length', String(buf.length));
-        res.setHeader('Cache-Control', 'public, max-age=3600');
-        res.end(buf);
+        sendRaw(data0Manager.resolveRawClientFile(reqPath));
         return;
       }
 

@@ -106,8 +106,9 @@ EM_JS(int, js_fetch_file_to_fs, (const char* rawPath), {
     }
 
     try {
+        var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/api/data0/raw?path=' + encodeURIComponent(p), false);
+        xhr.open('GET', apiBase + '/api/data0/raw?path=' + encodeURIComponent(p), false);
         xhr.overrideMimeType('text/plain; charset=x-user-defined');
         xhr.send(null);
         if (xhr.status === 200 && typeof xhr.responseText === 'string') {
@@ -284,23 +285,24 @@ EM_JS(void, js_play_sound, (int index, const char* filenamePtr, int loop, int vo
             window.addEventListener(ev, resumePendingAudio, { capture: true, passive: true });
         });
     }
+    var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
     var url = '';
     if (fname) {
         fname = fname.split(String.fromCharCode(92)).join('/');
         while (fname.indexOf('./') === 0) fname = fname.substring(2);
         if (fname.toLowerCase().indexOf('sound/') !== 0) {
             if (index > 0 && index < 100 && fname.toLowerCase().indexOf('static/') !== 0) {
-                url = '/api/data0/raw?path=' + encodeURIComponent('sound/static/' + fname);
+                url = apiBase + '/api/data0/raw?path=' + encodeURIComponent('sound/static/' + fname);
             } else {
-                url = '/api/data0/raw?path=' + encodeURIComponent('sound/' + fname);
+                url = apiBase + '/api/data0/raw?path=' + encodeURIComponent('sound/' + fname);
             }
         } else {
-            url = '/api/data0/raw?path=' + encodeURIComponent(fname);
+            url = apiBase + '/api/data0/raw?path=' + encodeURIComponent(fname);
         }
     } else {
         var padded = String(index).padStart(4, '0') + '.wav';
         var rel = (index > 0 && index < 100) ? ('sound/static/' + padded) : ('sound/' + padded);
-        url = '/api/data0/raw?path=' + encodeURIComponent(rel);
+        url = apiBase + '/api/data0/raw?path=' + encodeURIComponent(rel);
     }
     try {
         var existing = Module._audioMap[index];
@@ -1066,8 +1068,9 @@ EM_JS(int, js_net_connect, (int sock, const char* ipPtr, int port), {
     var ip = ipPtr ? UTF8ToString(ipPtr) : '127.0.0.1';
     Module._netSockets[sock] = { ip: ip, port: port, recvBuf: [], lastPoll: performance.now() };
     try {
+        var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
         var xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/wasm-net?op=connect&sock=' + sock + '&port=' + port, false);
+        xhr.open('POST', apiBase + '/api/wasm-net?op=connect&sock=' + sock + '&port=' + port, false);
         xhr.overrideMimeType('text/plain; charset=x-user-defined');
         xhr.send(null);
         if (xhr.status === 200 && typeof xhr.responseText === 'string' && xhr.responseText.length > 0) {
@@ -1087,8 +1090,9 @@ EM_JS(int, js_net_send, (int sock, const uint8_t* ptr, int len), {
         var payload = new Uint8Array(heap.buffer, ptr, len);
         var copy = new Uint8Array(len);
         copy.set(payload);
+        var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
         var xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/wasm-net?op=send&sock=' + sock + '&port=' + s.port, false);
+        xhr.open('POST', apiBase + '/api/wasm-net?op=send&sock=' + sock + '&port=' + s.port, false);
         xhr.overrideMimeType('text/plain; charset=x-user-defined');
         xhr.send(copy);
         s.lastPoll = performance.now();
@@ -1109,8 +1113,9 @@ EM_JS(int, js_net_available, (int sock), {
         if (!s.lastPoll || now - s.lastPoll > 250) {
             s.lastPoll = now;
             try {
+                var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
                 var xhr = new XMLHttpRequest();
-                xhr.open('POST', '/api/wasm-net?op=poll&sock=' + sock + '&port=' + s.port, false);
+                xhr.open('POST', apiBase + '/api/wasm-net?op=poll&sock=' + sock + '&port=' + s.port, false);
                 xhr.overrideMimeType('text/plain; charset=x-user-defined');
                 xhr.send(null);
                 if (xhr.status === 200 && typeof xhr.responseText === 'string' && xhr.responseText.length > 0) {

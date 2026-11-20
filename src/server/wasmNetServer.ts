@@ -881,9 +881,9 @@ export class WasmNetServer {
   }
 
   private async processAccessLoginAsync(payload: Buffer, replies: Buffer[]): Promise<void> {
-    // HSEL_INITIAL (24 bytes) + id[20] @ 24 + pw[20] @ 44
-    const idFromPacket = payload.length >= 44 ? readFixedString(payload, 24, 20).trim() : '';
-    const pwFromPacket = payload.length >= 64 ? readFixedString(payload, 44, 20) : '';
+    // HSEL_INITIAL (64 bytes: 4 int32 + 12 int32 Keys) + id[20] @ 64 + pw[20] @ 84
+    const idFromPacket = payload.length >= 84 ? readFixedString(payload, 64, 20).trim() : '';
+    const pwFromPacket = payload.length >= 104 ? readFixedString(payload, 84, 20) : '';
     if (!idFromPacket) {
       replies.push(framePacket(CMD_INVALID_ID, Buffer.alloc(0)));
       return;
@@ -967,9 +967,9 @@ export class WasmNetServer {
       }
 
       case CMD_ACCESS_LOGIN: {
-        // Strict sync fallback (never auto-create accounts)
-        const idFromPacket = payload.length >= 44 ? readFixedString(payload, 24, 20).trim() : '';
-        const pwFromPacket = payload.length >= 64 ? readFixedString(payload, 44, 20) : '';
+        // Strict sync fallback (never auto-create accounts): HSEL_INITIAL (64) + id[20] @ 64 + pw[20] @ 84
+        const idFromPacket = payload.length >= 84 ? readFixedString(payload, 64, 20).trim() : '';
+        const pwFromPacket = payload.length >= 104 ? readFixedString(payload, 84, 20) : '';
         const key = idFromPacket.toLowerCase();
         const acc = key ? this.accounts.get(key) : undefined;
         if (!acc || acc.emailVerified !== true) {

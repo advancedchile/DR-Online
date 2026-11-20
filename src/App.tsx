@@ -134,10 +134,7 @@ export function App() {
 
   const handleLaunchGameTab = () => {
     const gameUrl = `${window.location.origin}${window.location.pathname}?play=1`;
-    const opened = window.open(gameUrl, '_blank', 'noopener');
-    if (!opened) {
-      setMode('game');
-    }
+    window.open(gameUrl, '_blank', 'noopener,noreferrer');
   };
 
   useEffect(() => {
@@ -153,13 +150,25 @@ export function App() {
         setFps(val);
       }
     };
+    const onVisibilityChange = () => {
+      const audioMap = window.Module?._audioMap;
+      if (!audioMap || typeof audioMap !== 'object') return;
+      const shouldMute = document.hidden;
+      for (const audio of Object.values<any>(audioMap)) {
+        if (audio && typeof audio === 'object') {
+          audio.muted = shouldMute;
+        }
+      }
+    };
     window.addEventListener('dr-open-help', onOpenHelp);
     window.addEventListener('dr-first-frame', onFirstFrame);
     window.addEventListener('dr-fps-update', onFpsUpdate);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('dr-open-help', onOpenHelp);
       window.removeEventListener('dr-first-frame', onFirstFrame);
       window.removeEventListener('dr-fps-update', onFpsUpdate);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
 

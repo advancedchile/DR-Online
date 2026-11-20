@@ -339,6 +339,7 @@ EM_JS(void, js_play_sound, (int index, const char* filenamePtr, int loop, int vo
         }
         var audio = new Audio(url);
         audio.loop = !!loop;
+        audio.muted = !!(typeof document !== 'undefined' && document.hidden);
         var isMusic = (index >= 1 && index <= 20) || (index >= 201 && index <= 220) || !!loop;
         var baseVol = isMusic ? (Module._musicVol !== undefined ? Module._musicVol : 0.7)
                               : (Module._sfxVol !== undefined ? Module._sfxVol : 0.85);

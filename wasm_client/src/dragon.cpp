@@ -1697,15 +1697,7 @@ static void DrainWin32Messages()
 static void DragonWasmFrameTick()
 {
 	DWORD nowMs = ::timeGetTime();
-	DWORD minFrameMs = 30; // ~33 FPS in-game
-	if (NowLoading)
-	{
-		minFrameMs = 0; // No artificial sleep between loading steps
-	}
-	else if (s_wasmRunState == WASM_STATE_MAIN_MENU_LOOP)
-	{
-		minFrameMs = 16; // ~60 FPS in login / character selection screens
-	}
+	DWORD minFrameMs = NowLoading ? 0 : 50; // Max 20 FPS (50 ms/frame), no artificial sleep while loading
 	if (minFrameMs > 0 && nowMs - s_lastFrameTickMs < minFrameMs)
 	{
 		return;

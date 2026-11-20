@@ -1465,6 +1465,11 @@ BOOL LoadGameInfo( void )
 	return	TRUE;
 }	
 	
+#ifdef __EMSCRIPTEN__
+extern "C" void dr_wasm_start_core_preload(void);
+extern "C" void dr_wasm_preload_map_bundle(const char* mapName);
+#endif
+
 int LoadingGameData()
 {	// eLoadingGameDataStep 를 사용
 	static int s_iLoadingPos = LGDS_FIRST;
@@ -1525,6 +1530,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP1:
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_preload_map_bundle(MapName);
+#endif
 			HandleRunning(&connections);
 			g_Volume_Off = 1; // 로딩이 끝날 때까지 배경음악 이외의 소리 안나오게
 			
@@ -1716,6 +1724,7 @@ static void DragonWasmFrameTick()
 	if (s_wasmRunState == WASM_STATE_INIT_MAIN_MENU)
 	{
 		printf("[DR-INIT] Initializing main menu...\n");
+		dr_wasm_start_core_preload();
 		QuitFlag = 0;
 		LoadMenuData(0);
 		LoadMenuData(4);

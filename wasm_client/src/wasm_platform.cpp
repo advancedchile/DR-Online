@@ -129,6 +129,101 @@ EM_JS(int, js_fetch_file_to_fs, (const char* rawPath), {
     }
 });
 
+EM_JS(void, js_start_core_preload, (), {
+    if (Module._corePreloadStarted) return;
+    Module._corePreloadStarted = true;
+    if (!Module._loadedBundles) Module._loadedBundles = {};
+
+    Module._unpackBundleBuffer = function(buf, bundleKey) {
+        try {
+            var u8 = (buf instanceof Uint8Array) ? buf : new Uint8Array(buf);
+            if (u8.length < 4) return 0;
+            var dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+            var count = dv.getUint32(0, true);
+            var off = 4;
+            var dec = (typeof TextDecoder !== 'undefined') ? new TextDecoder('utf-8') : null;
+            for (var i = 0; i < count && off + 6 <= u8.length; i++) {
+                var pLen = dv.getUint16(off, true);
+                off += 2;
+                if (off + pLen + 4 > u8.length) break;
+                var pathStr = '';
+                if (dec) {
+                    pathStr = dec.decode(u8.subarray(off, off + pLen));
+                } else {
+                    for (var c = 0; c < pLen; c++) pathStr += String.fromCharCode(u8[off + c]);
+                }
+                off += pLen;
+                var dLen = dv.getUint32(off, true);
+                off += 4;
+                if (off + dLen > u8.length) break;
+                var fileBytes = u8.subarray(off, off + dLen);
+                off += dLen;
+
+                var parts = pathStr.split('/');
+                var cur = '';
+                for (var p = 1; p < parts.length - 1; p++) {
+                    cur += '/' + parts[p];
+                    try { FS.mkdir(cur); } catch (e) {}
+                }
+                try { FS.writeFile(pathStr, fileBytes); } catch (e) {}
+            }
+            Module._loadedBundles[bundleKey] = true;
+            return count;
+        } catch (e) {
+            return 0;
+        }
+    };
+
+    var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
+    var prefetch = function(url, key) {
+        fetch(url, { method: 'GET' })
+            .then(function(r) { return r.ok ? r.arrayBuffer() : null; })
+            .then(function(ab) { if (ab) Module._unpackBundleBuffer(ab, key); })
+            .catch(function() {});
+    };
+    prefetch(apiBase + '/api/data0/bundle?pack=core', 'core');
+    prefetch(apiBase + '/api/data0/bundle?pack=map&map=scholium', 'map:scholium');
+});
+
+EM_JS(void, js_preload_map_bundle, (const char* mapPtr), {
+    if (!Module._loadedBundles) Module._loadedBundles = {};
+    var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
+
+    function fetchSyncBundle(url, key) {
+        if (Module._loadedBundles[key]) return;
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, false);
+            xhr.overrideMimeType('text/plain; charset=x-user-defined');
+            xhr.send(null);
+            if (xhr.status === 200 && typeof xhr.responseText === 'string' && xhr.responseText.length >= 4) {
+                var txt = xhr.responseText;
+                var bytes = new Uint8Array(txt.length);
+                for (var b = 0; b < txt.length; b++) bytes[b] = txt.charCodeAt(b) & 0xff;
+                if (typeof Module._unpackBundleBuffer === 'function') {
+                    Module._unpackBundleBuffer(bytes, key);
+                }
+            }
+        } catch (e) {}
+    }
+
+    if (!Module._loadedBundles['core']) {
+        fetchSyncBundle(apiBase + '/api/data0/bundle?pack=core', 'core');
+    }
+    var mapName = mapPtr ? UTF8ToString(mapPtr).trim().toLowerCase() : '';
+    if (mapName && !Module._loadedBundles['map:' + mapName]) {
+        fetchSyncBundle(apiBase + '/api/data0/bundle?pack=map&map=' + encodeURIComponent(mapName), 'map:' + mapName);
+    }
+});
+
+extern "C" void dr_wasm_start_core_preload(void) {
+    js_start_core_preload();
+}
+
+extern "C" void dr_wasm_preload_map_bundle(const char* mapName) {
+    js_preload_map_bundle(mapName);
+}
+
 extern "C" FILE* __real_fopen(const char* path, const char* mode);
 
 static void normalize_rel_path(const char* inPath, char* outPath, size_t maxLen) {

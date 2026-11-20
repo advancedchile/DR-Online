@@ -213,6 +213,7 @@ export class Data0ArchiveManager {
   private entriesByBasename = new Map<string, string[]>();
   private objectById = new Map<number, string>();
   private decompressedCache = new Map<string, Buffer>();
+  private bundleCache = new Map<string, Buffer>();
   private spritePngCache = new Map<string, { png: Buffer; w: number; h: number; ox: number; oy: number }>();
   private mapBundleCache = new Map<string, { json: string; atlasPng: Buffer }>();
   private soundListBinCache: Buffer | null = null;
@@ -640,6 +641,164 @@ export class Data0ArchiveManager {
     }
 
     return null;
+  }
+
+  private packFilesGzip(files: Array<{ virtualPath: string; data: Buffer }>): Buffer {
+    let totalLen = 4;
+    const encoded = files.map((f) => {
+      const pBuf = Buffer.from(f.virtualPath.toLowerCase(), 'utf8');
+      totalLen += 2 + pBuf.length + 4 + f.data.length;
+      return { pBuf, data: f.data };
+    });
+    const raw = Buffer.allocUnsafe(totalLen);
+    raw.writeUInt32LE(encoded.length, 0);
+    let off = 4;
+    for (const item of encoded) {
+      raw.writeUInt16LE(item.pBuf.length, off);
+      off += 2;
+      item.pBuf.copy(raw, off);
+      off += item.pBuf.length;
+      raw.writeUInt32LE(item.data.length, off);
+      off += 4;
+      item.data.copy(raw, off);
+      off += item.data.length;
+    }
+    return zlib.gzipSync(raw, { level: 6 });
+  }
+
+  public async getCoreBundleGzipAsync(): Promise<Buffer> {
+    const cached = this.bundleCache.get('core');
+    if (cached) return cached;
+    await this.ensureInitializedAsync();
+
+    const relPaths: string[] = [
+      'data/sysmenu.dat',
+      'data/skilltable.bin',
+      'data/attackrange0.bin',
+      'data/attackrange1.bin',
+      'char/00clothorderbasic.bin',
+      'char/01clothorderbasic.bin',
+      'char/00clothorderbow.bin',
+      'char/01clothorderbow.bin',
+      'char/000000.spr',
+      'char/001000.spr',
+      'char/000104.spr',
+      'char/000105.spr',
+      'char/000106.spr',
+      'char/000107.spr'
+    ];
+    for (let i = 0; i < 21; i++) {
+      relPaths.push(`data/lig${String(i).padStart(3, '0')}.spr`);
+    }
+    // Include all plus*.csp menu sprites that exist in data0
+    for (const [baseName] of this.entriesByBasename.entries()) {
+      if (baseName.startsWith('plus') && baseName.endsWith('.csp')) {
+        relPaths.push(`data/${baseName}`);
+      }
+    }
+
+    const results = await Promise.all(
+      relPaths.map(async (rel) => {
+        try {
+          const data = await this.resolveRawClientFileAsync(rel);
+          return data ? { virtualPath: `/${rel.toLowerCase()}`, data } : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+    const valid = results.filter((x): x is { virtualPath: string; data: Buffer } => Boolean(x));
+    const gz = this.packFilesGzip(valid);
+    this.bundleCache.set('core', gz);
+    return gz;
+  }
+
+  public async getMapBundleGzipAsync(mapNameRaw: string): Promise<Buffer> {
+    const map = mapNameRaw.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!map) return this.packFilesGzip([]);
+    const cacheKey = `map:${map}`;
+    const cached = this.bundleCache.get(cacheKey);
+    if (cached) return cached;
+    await this.ensureInitializedAsync();
+
+    const fileMap = new Map<string, Buffer>();
+    const addFile = async (virtualPath: string, resolvePath: string) => {
+      try {
+        const data = await this.resolveRawClientFileAsync(resolvePath);
+        if (data) fileMap.set(virtualPath.toLowerCase(), data);
+      } catch {
+        // ignore missing optional map file
+      }
+    };
+
+    // 1. Core map containers in parallel
+    await Promise.all([
+      addFile(`/map/${map}.map`, `map/${map}.map`),
+      addFile(`/event/${map}.rof`, `event/${map}.rof`),
+      addFile(`/event/${map}.ent`, `event/${map}.ent`),
+      addFile(`/object/${map}/${map}.toi2`, `map/${map}.toi2`),
+      addFile(`/map/${map}.sou2`, `map/${map}.sou2`)
+    ]);
+
+    // 2. Tilesheet .sou files referenced by .sou2 (or fallback ma-in.sou)
+    const souNames = new Set<string>(['ma-in']);
+    const sou2Buf = fileMap.get(`/map/${map}.sou2`);
+    if (sou2Buf && sou2Buf.length >= 2) {
+      for (let i = 0; i < Math.min(sou2Buf.length, 32); i++) {
+        const idx = sou2Buf[i];
+        if (idx >= 1 && idx <= TILESHEET_NAMES.length) {
+          souNames.add(TILESHEET_NAMES[idx - 1].toLowerCase());
+        }
+      }
+    }
+    await Promise.all(
+      Array.from(souNames).map((s) => addFile(`/map/${s}.sou`, `map/${s}.sou`))
+    );
+
+    // 3. Parse .toi2 to bundle all unique object .csp sprites (and animated frames) in parallel
+    const toi2Buf = fileMap.get(`/object/${map}/${map}.toi2`);
+    if (toi2Buf && toi2Buf.length >= 6) {
+      const objCount = toi2Buf.readUInt16LE(2);
+      const baseOff = 6 + objCount * 4;
+      const objIds = new Set<number>();
+      for (let i = 0; i < objCount; i++) {
+        const recOff = baseOff + i * 132;
+        if (recOff + 132 > toi2Buf.length) break;
+        const id = toi2Buf.readUInt16LE(recOff);
+        if (id > 0) objIds.add(id);
+      }
+
+      const objJobs: Array<Promise<void>> = [];
+      for (const fullId of objIds) {
+        const lev = Math.floor(fullId / 1000);
+        const id = fullId % 1000;
+        const id4 = String(id).padStart(4, '0');
+        const dirs = [String(lev), map];
+        for (const dir of dirs) {
+          const baseEntry = `images/objects/legacy/${dir}/${id4}.csp`;
+          if (this.entries.has(baseEntry)) {
+            objJobs.push(addFile(`/object/${dir}/${id4}.csp`, `object/${dir}/${id4}.csp`));
+          }
+          for (let frame = 1; frame <= 16; frame++) {
+            const f2 = String(frame).padStart(2, '0');
+            const frameEntry = `images/objects/legacy/${dir}/${id4}${f2}.csp`;
+            if (this.entries.has(frameEntry)) {
+              objJobs.push(addFile(`/object/${dir}/${id4}${f2}.csp`, `object/${dir}/${id4}${f2}.csp`));
+            }
+          }
+        }
+      }
+      await Promise.all(objJobs);
+    }
+
+    const packed = Array.from(fileMap.entries()).map(([virtualPath, data]) => ({ virtualPath, data }));
+    const gz = this.packFilesGzip(packed);
+    if (this.bundleCache.size > 10) {
+      const first = this.bundleCache.keys().next().value;
+      if (first && first !== 'core') this.bundleCache.delete(first);
+    }
+    this.bundleCache.set(cacheKey, gz);
+    return gz;
   }
 
   public getContainerFrameOffsets(buf: Buffer): number[] {
@@ -1281,6 +1440,31 @@ export function createData0Middleware() {
         }
         res.statusCode = 200;
         res.end(Buffer.alloc(0));
+        return;
+      }
+
+      // 0b-bis. Gzipped Preload Bundles for fast browser startup & map entry: /api/data0/bundle?pack=core|map
+      if (pathname === '/api/data0/bundle') {
+        const pack = parsedUrl.searchParams.get('pack') || 'core';
+        const mapParam = parsedUrl.searchParams.get('map') || '';
+        const promise =
+          pack === 'map'
+            ? data0Manager.getMapBundleGzipAsync(mapParam)
+            : data0Manager.getCoreBundleGzipAsync();
+        promise
+          .then((gz) => {
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.setHeader('Content-Encoding', 'gzip');
+            res.setHeader('Content-Length', String(gz.length));
+            res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+            res.end(gz);
+          })
+          .catch((err) => {
+            console.error('[data0/bundle] error:', err);
+            res.statusCode = 502;
+            res.end();
+          });
         return;
       }
 

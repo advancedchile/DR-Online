@@ -98,7 +98,14 @@ const CODE_TO_DIK: Record<string, number> = {
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [mode, setMode] = useState<'portal' | 'game'>('portal');
+  const [mode, setMode] = useState<'portal' | 'game'>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('play') === '1' ? 'game' : 'portal';
+    } catch {
+      return 'portal';
+    }
+  });
   const [lang, setLang] = useState<GuideLang>(() => {
     try {
       const saved = localStorage.getItem('dr_ui_lang');
@@ -109,7 +116,12 @@ export function App() {
   });
   const [helpOpen, setHelpOpen] = useState<boolean>(false);
   const helpOpenRef = useRef<boolean>(false);
-  const [status, setStatus] = useState<string>('Initializing Dragon Raja C++ WebAssembly Engine...');
+  const [status, setStatus] = useState<string>(
+    lang === 'es'
+      ? 'Cargando Dragon Raja Online...'
+      : 'Loading Dragon Raja Online...'
+  );
+  const [fps, setFps] = useState<number | null>(null);
 
   const handleChangeLang = (nextLang: GuideLang) => {
     setLang(nextLang);
@@ -120,15 +132,34 @@ export function App() {
     }
   };
 
+  const handleLaunchGameTab = () => {
+    const gameUrl = `${window.location.origin}${window.location.pathname}?play=1`;
+    const opened = window.open(gameUrl, '_blank', 'noopener');
+    if (!opened) {
+      setMode('game');
+    }
+  };
+
   useEffect(() => {
     helpOpenRef.current = helpOpen;
   }, [helpOpen]);
 
   useEffect(() => {
     const onOpenHelp = () => setHelpOpen(true);
+    const onFirstFrame = () => setStatus('');
+    const onFpsUpdate = (e: Event) => {
+      const val = (e as CustomEvent<number>).detail;
+      if (typeof val === 'number' && !Number.isNaN(val)) {
+        setFps(val);
+      }
+    };
     window.addEventListener('dr-open-help', onOpenHelp);
+    window.addEventListener('dr-first-frame', onFirstFrame);
+    window.addEventListener('dr-fps-update', onFpsUpdate);
     return () => {
       window.removeEventListener('dr-open-help', onOpenHelp);
+      window.removeEventListener('dr-first-frame', onFirstFrame);
+      window.removeEventListener('dr-fps-update', onFpsUpdate);
     };
   }, []);
 
@@ -155,7 +186,13 @@ export function App() {
           console.warn('[DR-WASM]', text);
         },
         onRuntimeInitialized: () => {
-          if (mounted) setStatus('');
+          if (mounted) {
+            setStatus(
+              lang === 'es'
+                ? 'Conectando al servidor y cargando gráficos...'
+                : 'Connecting to server and loading game assets...'
+            );
+          }
         }
       };
 
@@ -163,7 +200,13 @@ export function App() {
       script.src = `${baseUrl}wasm/dragonraja.js?v=${cacheBust}`;
       script.async = true;
       script.onload = () => {
-        if (mounted) setStatus('');
+        if (mounted) {
+          setStatus(
+            lang === 'es'
+              ? 'Iniciando motor gráfico...'
+              : 'Starting game engine...'
+          );
+        }
       };
       script.onerror = () => {
         if (mounted) setStatus(`Failed to load ${baseUrl}wasm/dragonraja.js`);
@@ -295,7 +338,7 @@ export function App() {
           lang={lang}
           onChangeLang={handleChangeLang}
           onOpenHelp={() => setHelpOpen(true)}
-          onEnterGame={() => setMode('game')}
+          onEnterGame={handleLaunchGameTab}
         />
       ) : (
         <div
@@ -337,22 +380,54 @@ export function App() {
                 cursor: 'none'
               }}
             />
+            {fps !== null && !status && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 6,
+                  right: 8,
+                  padding: '2px 6px',
+                  backgroundColor: 'rgba(14, 3, 0, 0.75)',
+                  border: '1px solid #3e2a0c',
+                  color: '#e7c95e',
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  lineHeight: 1.2,
+                  pointerEvents: 'none'
+                }}
+              >
+                {fps} FPS
+              </div>
+            )}
             {status && (
               <div
                 style={{
                   position: 'absolute',
                   inset: 0,
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: '#d8c28a',
-                  fontFamily: 'monospace',
-                  fontSize: 14,
-                  backgroundColor: 'rgba(0,0,0,0.75)',
+                  gap: 10,
+                  backgroundColor: '#0e0300',
+                  border: '1px solid #3e2a0c',
+                  color: '#e7c95e',
+                  fontFamily: '"Cinzel", Georgia, serif',
                   pointerEvents: 'none'
                 }}
               >
-                {status}
+                <div style={{ fontSize: 22, letterSpacing: '0.08em' }}>
+                  DRAGON RAJA ONLINE
+                </div>
+                <div
+                  style={{
+                    fontFamily: 'Tahoma, Verdana, sans-serif',
+                    fontSize: 13,
+                    color: '#96814a'
+                  }}
+                >
+                  {status}
+                </div>
               </div>
             )}
           </div>

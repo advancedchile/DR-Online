@@ -320,13 +320,34 @@ export class WasmNetServer {
     this.saveAccounts();
   }
 
+  private normalizeAccount(raw: any, fallbackId = 'admin'): WasmAccountRecord {
+    const chars: Array<WasmCharacterRecord | null> = [null, null, null, null];
+    const srcChars = raw?.characters;
+    if (Array.isArray(srcChars)) {
+      for (let i = 0; i < 4; i++) {
+        chars[i] = srcChars[i] && typeof srcChars[i] === 'object' ? (srcChars[i] as WasmCharacterRecord) : null;
+      }
+    } else if (srcChars && typeof srcChars === 'object') {
+      for (let i = 0; i < 4; i++) {
+        const entry = srcChars[String(i)] ?? srcChars[i];
+        chars[i] = entry && typeof entry === 'object' ? (entry as WasmCharacterRecord) : null;
+      }
+    }
+    return {
+      ...raw,
+      id: typeof raw?.id === 'string' && raw.id.trim() ? raw.id.trim() : fallbackId,
+      nation: typeof raw?.nation === 'number' ? raw.nation : 0,
+      characters: chars
+    };
+  }
+
   private async initFirebaseSync(): Promise<void> {
     await this.firebaseDb.syncReferenceDatabaseOnce(originalSqlDb as Record<string, any>);
     const cloudAccounts = await this.firebaseDb.loadAllAccounts();
     if (cloudAccounts && Object.keys(cloudAccounts).length > 0) {
       for (const [k, v] of Object.entries(cloudAccounts)) {
         if (v && typeof v === 'object') {
-          this.accounts.set(k.toLowerCase(), v as WasmAccountRecord);
+          this.accounts.set(k.toLowerCase(), this.normalizeAccount(v, k));
         }
       }
     } else if (this.accounts.size > 0) {
@@ -414,11 +435,14 @@ export class WasmNetServer {
     if (!acc) {
       acc = {
         id: userId || 'admin',
-        nation: 3, // Vyseus default
+        nation: 0,
         characters: [null, null, null, null]
       };
       this.accounts.set(key, acc);
       this.saveAccounts();
+    } else if (!Array.isArray(acc.characters) || acc.characters.length < 4) {
+      acc = this.normalizeAccount(acc, userId || 'admin');
+      this.accounts.set(key, acc);
     }
     return acc;
   }
@@ -505,10 +529,11 @@ export class WasmNetServer {
 
   private buildAcceptLoginPacket(acc: WasmAccountRecord): Buffer {
     // sizeof(t_server_accept_login) == 188 (4-byte aligned)
+    const chars = Array.isArray(acc.characters) ? acc.characters : [];
     const buf = Buffer.alloc(188, 0);
     buf.writeInt16LE(1, 0); // server_id = 1
     for (let i = 0; i < 4; i++) {
-      const ch = acc.characters[i];
+      const ch = chars[i];
       if (!ch) continue;
       writeFixedString(buf, ch.name, 2 + i * 20, 20);
       buf.writeUInt8(ch.level || 1, 82 + i);

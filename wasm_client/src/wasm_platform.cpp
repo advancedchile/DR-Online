@@ -235,6 +235,26 @@ EM_JS(void, js_present_rgba, (const uint32_t* rgbaPtr, int width, int height), {
     var src = new Uint8Array(heap.buffer, rgbaPtr, byteLen);
     Module._imgData.data.set(src);
     Module._ctx2d.putImageData(Module._imgData, 0, 0);
+    if (typeof window !== 'undefined') {
+        if (!Module._firstFrameRendered) {
+            Module._firstFrameRendered = true;
+            window.dispatchEvent(new CustomEvent('dr-first-frame'));
+        }
+        var nowFps = performance.now();
+        if (!Module._fpsLastTime) {
+            Module._fpsLastTime = nowFps;
+            Module._fpsFrames = 0;
+        }
+        Module._fpsFrames++;
+        var elapsed = nowFps - Module._fpsLastTime;
+        if (elapsed >= 500) {
+            var fpsVal = Math.round((Module._fpsFrames * 1000) / elapsed);
+            Module._fpsFrames = 0;
+            Module._fpsLastTime = nowFps;
+            window.__drFps = fpsVal;
+            window.dispatchEvent(new CustomEvent('dr-fps-update', { detail: fpsVal }));
+        }
+    }
 });
 
 extern "C" void wasm_present_backbuffer(const void* buf, int width, int height) {
@@ -1108,21 +1128,31 @@ EM_JS(int, js_net_send, (int sock, const uint8_t* ptr, int len), {
 EM_JS(int, js_net_available, (int sock), {
     if (!Module._netSockets || !Module._netSockets[sock]) return 0;
     var s = Module._netSockets[sock];
-    if (s.recvBuf.length === 0) {
+    if (s.recvBuf.length === 0 && !s.polling) {
         var now = performance.now();
-        if (!s.lastPoll || now - s.lastPoll > 250) {
+        if (!s.lastPoll || now - s.lastPoll > 450) {
             s.lastPoll = now;
+            s.polling = true;
             try {
                 var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
-                var xhr = new XMLHttpRequest();
-                xhr.open('POST', apiBase + '/api/wasm-net?op=poll&sock=' + sock + '&port=' + s.port, false);
-                xhr.overrideMimeType('text/plain; charset=x-user-defined');
-                xhr.send(null);
-                if (xhr.status === 200 && typeof xhr.responseText === 'string' && xhr.responseText.length > 0) {
-                    var txt = xhr.responseText;
-                    for (var i = 0; i < txt.length; i++) s.recvBuf.push(txt.charCodeAt(i) & 0xff);
-                }
-            } catch (e) {}
+                fetch(apiBase + '/api/wasm-net?op=poll&sock=' + sock + '&port=' + s.port, {
+                    method: 'POST',
+                    cache: 'no-store'
+                }).then(function(res) {
+                    if (!res.ok) return null;
+                    return res.arrayBuffer();
+                }).then(function(ab) {
+                    s.polling = false;
+                    if (ab && ab.byteLength > 0) {
+                        var arr = new Uint8Array(ab);
+                        for (var i = 0; i < arr.length; i++) s.recvBuf.push(arr[i]);
+                    }
+                }).catch(function() {
+                    s.polling = false;
+                });
+            } catch (e) {
+                s.polling = false;
+            }
         }
     }
     return s.recvBuf.length;

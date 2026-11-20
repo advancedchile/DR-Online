@@ -1262,12 +1262,18 @@ export function createData0Middleware() {
           const chunks: Buffer[] = [];
           req.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
           req.on('end', () => {
-            const body = chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
-            const out = wasmNetServer.handleSend(body);
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'application/octet-stream');
-            res.setHeader('Cache-Control', 'no-store');
-            res.end(out);
+            try {
+              const body = chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
+              const out = wasmNetServer.handleSend(body);
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'application/octet-stream');
+              res.setHeader('Cache-Control', 'no-store');
+              res.end(out);
+            } catch (sendErr) {
+              console.error('[wasm-net] handleSend error:', sendErr);
+              res.statusCode = 500;
+              res.end(Buffer.alloc(0));
+            }
           });
           return;
         }

@@ -1608,11 +1608,12 @@ export const PortalAuthPage: React.FC<PortalAuthPageProps> = ({
                     </li>
                   </>
                 )}
-                <li>
+                <li style={{ marginTop: 10 }}>
                   <button
                     type="button"
                     onClick={() => onEnterGame(account?.id || '')}
-                    className="dr-portal-link"
+                    className="dr-portal-submit"
+                    style={{ width: '100%', fontSize: 12, padding: '7px 10px' }}
                   >
                     {t.playBoxLaunch}
                   </button>

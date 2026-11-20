@@ -20,7 +20,7 @@ body,
   font-family: Tahoma, Verdana, 'MS Sans Serif', sans-serif;
   font-size: 12px;
   color: #f3e8c8;
-  image-rendering: pixelated;
+  image-rendering: auto;
   cursor: url('/api/data0/sprite?path=images/misc/Cursor.spr&frame=1') 2 2, auto;
 }
 

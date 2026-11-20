@@ -386,7 +386,8 @@ export function App() {
                 height: '100%',
                 display: 'block',
                 outline: 'none',
-                cursor: 'none'
+                cursor: 'none',
+                imageRendering: 'auto'
               }}
             />
             {fps !== null && !status && (

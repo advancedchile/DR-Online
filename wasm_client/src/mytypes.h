@@ -81,11 +81,11 @@
 #define	SCREENMODE_WINDOW			0
 #define	SCREENMODE_FULLSCREEN		1
 
-#define	SCREEN_WIDTH				1344
-#define	SCREEN_HEIGHT				768
+#define	SCREEN_WIDTH				1600
+#define	SCREEN_HEIGHT				896
 
-#define GAME_SCREEN_XSIZE			1344
-#define GAME_SCREEN_YSIZE			768
+#define GAME_SCREEN_XSIZE			1600
+#define GAME_SCREEN_YSIZE			896
 
 // Window outer size for display scale (logic stays 800x600)
 #define WINDOW_OUTER_800x600		0

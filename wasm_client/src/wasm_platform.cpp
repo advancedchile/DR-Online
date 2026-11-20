@@ -300,12 +300,20 @@ extern int NowLoading;
 
 static uint32_t g_rgbaBuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 
+EM_JS(void, js_queue_text, (int x, int y, const char* strPtr, int r, int g, int b, int align), {
+    if (!Module._textQueue) Module._textQueue = [];
+    var text = strPtr ? UTF8ToString(strPtr) : '';
+    if (!text) return;
+    Module._textQueue.push({ x: x, y: y, text: text, r: r, g: g, b: b, align: align });
+});
+
 EM_JS(void, js_present_rgba, (const uint32_t* rgbaPtr, int width, int height), {
     var canvas = document.getElementById('dr-wasm-canvas');
     if (!canvas) return;
     if (canvas.width !== width || canvas.height !== height || !Module._ctx2d || !Module._imgData) {
         canvas.width = width;
         canvas.height = height;
+        canvas.style.imageRendering = 'auto';
         Module._ctx2d = canvas.getContext('2d', { alpha: false });
         Module._imgData = Module._ctx2d.createImageData(width, height);
         var wrap = document.getElementById('dr-wasm-wrapper');
@@ -330,6 +338,18 @@ EM_JS(void, js_present_rgba, (const uint32_t* rgbaPtr, int width, int height), {
     var src = new Uint8Array(heap.buffer, rgbaPtr, byteLen);
     Module._imgData.data.set(src);
     Module._ctx2d.putImageData(Module._imgData, 0, 0);
+    if (Module._textQueue && Module._textQueue.length > 0) {
+        var ctx = Module._ctx2d;
+        ctx.font = '12px Tahoma, Verdana, Arial, sans-serif';
+        ctx.textBaseline = 'top';
+        for (var ti = 0; ti < Module._textQueue.length; ti++) {
+            var item = Module._textQueue[ti];
+            ctx.textAlign = item.align === 1 ? 'center' : (item.align === 2 ? 'right' : 'left');
+            ctx.fillStyle = 'rgb(' + item.r + ',' + item.g + ',' + item.b + ')';
+            ctx.fillText(item.text, item.x, item.y);
+        }
+        Module._textQueue.length = 0;
+    }
     if (typeof window !== 'undefined') {
         if (!Module._firstFrameRendered) {
             Module._firstFrameRendered = true;
@@ -710,23 +730,19 @@ BOOL GetTextExtentPoint32A(HDC hdc, LPCSTR lpString, int c, LPSIZE psizl) {
 
 BOOL TextOutA(HDC hdc, int x, int y, LPCSTR lpString, int c) {
     if (!lpString || c <= 0) return TRUE;
-    if (!g_DestBackBuf && g_DirectDrawInfo.lpDirectDrawSurfaceBack) {
-        g_DestBackBuf = (char*)g_DirectDrawInfo.lpDirectDrawSurfaceBack->m_buffer;
-    }
-    if (!g_DestBackBuf) return TRUE;
+    char tmp[512];
+    int n = c < (int)sizeof(tmp) - 1 ? c : (int)sizeof(tmp) - 1;
+    memcpy(tmp, lpString, n);
+    tmp[n] = '\0';
 
-    int totalW = c * 6;
-    int startX = x;
-    if (s_hdcTextAlign & TA_CENTER) {
-        startX = x - totalW / 2;
-    } else if (s_hdcTextAlign & TA_RIGHT) {
-        startX = x - totalW;
-    }
+    int align = 0;
+    if (s_hdcTextAlign & TA_CENTER) align = 1;
+    else if (s_hdcTextAlign & TA_RIGHT) align = 2;
 
-    uint16_t col565 = colorref_to_rgb565(s_hdcTextColor);
-    for (int i = 0; i < c; ++i) {
-        draw_glyph_5x7_to_backbuf(startX + i * 6, y, lpString[i], col565);
-    }
+    int r = (int)(s_hdcTextColor & 0xFF);
+    int g = (int)((s_hdcTextColor >> 8) & 0xFF);
+    int b = (int)((s_hdcTextColor >> 16) & 0xFF);
+    js_queue_text(x, y, tmp, r, g, b, align);
     return TRUE;
 }
 

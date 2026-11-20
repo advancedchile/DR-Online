@@ -1468,6 +1468,7 @@ BOOL LoadGameInfo( void )
 #ifdef __EMSCRIPTEN__
 extern "C" void dr_wasm_start_core_preload(void);
 extern "C" void dr_wasm_preload_map_bundle(const char* mapName);
+extern "C" void dr_wasm_set_loading_status(int active, int step, int total, const char* key);
 #endif
 
 int LoadingGameData()
@@ -1531,7 +1532,9 @@ int LoadingGameData()
 	case LGDS_STEP1:
 		{
 #ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 1, 10, "bundle");
 			dr_wasm_preload_map_bundle(MapName);
+			dr_wasm_set_loading_status(1, 2, 10, "terrain");
 #endif
 			HandleRunning(&connections);
 			g_Volume_Off = 1; // 로딩이 끝날 때까지 배경음악 이외의 소리 안나오게
@@ -1562,6 +1565,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP3 :
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 3, 10, "objects");
+#endif
 			LoadTOI(MapName);
 			HandleRunning(&connections );
 			BuildRoofHeader(&g_RoofHeader, MapName);					// rof
@@ -1578,6 +1584,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP4:		
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 4, 10, "tiles");
+#endif
 			LoadMapSource2( MapName );									// sou		
 			HandleRunning( &connections);
 			s_iLoadingPos = LGDS_STEP5;
@@ -1585,6 +1594,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP5: 
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 5, 10, "characters");
+#endif
 			LoadCharSpriteData( "./char/000000.spr",  &CharBuf[0],  &CharBufLength[0], &CharSpr[0], LD_CHAR_SPRITE_ALL_LOAD);
 			HandleRunning(&connections);
 			s_iLoadingPos= LGDS_STEP6;
@@ -1592,6 +1604,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP6: 
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 6, 10, "equipment");
+#endif
 			LoadCharSpriteData( "./char/001000.spr",  &CharBuf[1],  &CharBufLength[1], &CharSpr[1], LD_CHAR_SPRITE_ALL_LOAD);
 			LoadHeroClothAccessoryData( 104, 107 );
 			
@@ -1621,6 +1636,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP8 : 
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 7, 10, "lighting");
+#endif
 			LoadBrightData();			
 			HandleRunning(&connections);
 			s_iLoadingPos = LGDS_STEP9;
@@ -1635,6 +1653,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP10: 
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 8, 10, "interface");
+#endif
 			LoadMenuData(1);
 			HandleRunning(&connections);
 			s_iLoadingPos = LGDS_STEP11;
@@ -1642,6 +1663,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP11: 
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 9, 10, "menus");
+#endif
 			LoadMenuData(2);
 			HandleRunning(&connections);
 			s_iLoadingPos = LGDS_STEP12;
@@ -1649,6 +1673,9 @@ int LoadingGameData()
 		}
 	case LGDS_STEP12:
 		{
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(1, 10, 10, "skills");
+#endif
 			LoadHongSkillTable();
 			HandleRunning(&connections);
 			LoadMenuData(5);
@@ -1661,6 +1688,9 @@ int LoadingGameData()
 
 			InitHpUpDown();
 			HandleRunning(&connections);
+#ifdef __EMSCRIPTEN__
+			dr_wasm_set_loading_status(0, 10, 10, "");
+#endif
 			s_iLoadingPos = LGDS_FIRST;
 			return LGDS_END; // 이것만 예외 처리
 		}

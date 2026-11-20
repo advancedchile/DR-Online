@@ -96,6 +96,33 @@ const CODE_TO_DIK: Record<string, number> = {
   Delete: 0xd3
 };
 
+const LOADING_STEP_LABELS: Record<'es' | 'en', Record<string, string>> = {
+  es: {
+    bundle: 'Descargando paquete del mapa...',
+    terrain: 'Construyendo terreno del mapa...',
+    objects: 'Cargando objetos, techos y eventos...',
+    tiles: 'Cargando texturas del suelo...',
+    characters: 'Cargando modelos de personajes...',
+    equipment: 'Cargando vestimenta y equipo...',
+    lighting: 'Cargando iluminación del entorno...',
+    interface: 'Cargando interfaz principal...',
+    menus: 'Cargando ventanas y menús...',
+    skills: 'Cargando tabla de habilidades...'
+  },
+  en: {
+    bundle: 'Downloading map resource bundle...',
+    terrain: 'Building map terrain...',
+    objects: 'Loading map objects, roofs and events...',
+    tiles: 'Loading ground tilesheets...',
+    characters: 'Loading character models...',
+    equipment: 'Loading clothing and equipment...',
+    lighting: 'Loading environment lighting...',
+    interface: 'Loading main interface...',
+    menus: 'Loading windows and menus...',
+    skills: 'Loading skill table...'
+  }
+};
+
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [mode, setMode] = useState<'portal' | 'game'>(() => {
@@ -122,6 +149,12 @@ export function App() {
       : 'Loading Dragon Raja Online...'
   );
   const [fps, setFps] = useState<number | null>(null);
+  const [mapLoading, setMapLoading] = useState<{
+    active: boolean;
+    step: number;
+    total: number;
+    key: string;
+  }>({ active: false, step: 0, total: 10, key: '' });
 
   const handleChangeLang = (nextLang: GuideLang) => {
     setLang(nextLang);
@@ -150,6 +183,12 @@ export function App() {
         setFps(val);
       }
     };
+    const onLoadingStatus = (e: Event) => {
+      const detail = (e as CustomEvent<{ active: boolean; step: number; total: number; key: string }>).detail;
+      if (detail) {
+        setMapLoading(detail);
+      }
+    };
     const onVisibilityChange = () => {
       const audioMap = window.Module?._audioMap;
       if (!audioMap || typeof audioMap !== 'object') return;
@@ -163,11 +202,13 @@ export function App() {
     window.addEventListener('dr-open-help', onOpenHelp);
     window.addEventListener('dr-first-frame', onFirstFrame);
     window.addEventListener('dr-fps-update', onFpsUpdate);
+    window.addEventListener('dr-loading-status', onLoadingStatus);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('dr-open-help', onOpenHelp);
       window.removeEventListener('dr-first-frame', onFirstFrame);
       window.removeEventListener('dr-fps-update', onFpsUpdate);
+      window.removeEventListener('dr-loading-status', onLoadingStatus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
@@ -407,6 +448,51 @@ export function App() {
                 }}
               >
                 {fps} FPS
+              </div>
+            )}
+            {mapLoading.active && !status && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: '50%',
+                  bottom: 24,
+                  transform: 'translateX(-50%)',
+                  width: 380,
+                  maxWidth: '90%',
+                  padding: '10px 14px',
+                  backgroundColor: 'rgba(14, 3, 0, 0.88)',
+                  border: '1px solid #3e2a0c',
+                  color: '#e7c95e',
+                  fontFamily: 'Tahoma, Verdana, sans-serif',
+                  fontSize: 12,
+                  pointerEvents: 'none'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span>
+                    {LOADING_STEP_LABELS[lang][mapLoading.key] ||
+                      (lang === 'es' ? 'Cargando datos del juego...' : 'Loading game data...')}
+                  </span>
+                  <span style={{ color: '#a97f22', marginLeft: 8 }}>
+                    {Math.min(100, Math.round((mapLoading.step / Math.max(1, mapLoading.total)) * 100))}%
+                  </span>
+                </div>
+                <div
+                  style={{
+                    width: '100%',
+                    height: 6,
+                    backgroundColor: '#090502',
+                    border: '1px solid #3e2a0c'
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.min(100, Math.round((mapLoading.step / Math.max(1, mapLoading.total)) * 100))}%`,
+                      height: '100%',
+                      backgroundColor: '#a97f22'
+                    }}
+                  />
+                </div>
               </div>
             )}
             {status && (

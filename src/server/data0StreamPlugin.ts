@@ -663,7 +663,7 @@ export class Data0ArchiveManager {
       item.data.copy(raw, off);
       off += item.data.length;
     }
-    return zlib.gzipSync(raw, { level: 6 });
+    return zlib.gzipSync(raw, { level: 1 });
   }
 
   public async getCoreBundleGzipAsync(): Promise<Buffer> {
@@ -671,8 +671,8 @@ export class Data0ArchiveManager {
     if (cached) return cached;
     await this.ensureInitializedAsync();
 
+    // Note: data/sysmenu.dat (28MB) is already loaded once during StartMenu; do NOT duplicate it here!
     const relPaths: string[] = [
-      'data/sysmenu.dat',
       'data/skilltable.bin',
       'data/attackrange0.bin',
       'data/attackrange1.bin',
@@ -740,8 +740,8 @@ export class Data0ArchiveManager {
       addFile(`/map/${map}.sou2`, `map/${map}.sou2`)
     ]);
 
-    // 2. Tilesheet .sou files referenced by .sou2 (or fallback ma-in.sou)
-    const souNames = new Set<string>(['ma-in']);
+    // 2. Tilesheet .sou files referenced by .sou2 (fallback ma-in.sou only if sou2 gave none)
+    const souNames = new Set<string>();
     const sou2Buf = fileMap.get(`/map/${map}.sou2`);
     if (sou2Buf && sou2Buf.length >= 2) {
       for (let i = 0; i < Math.min(sou2Buf.length, 32); i++) {
@@ -750,6 +750,9 @@ export class Data0ArchiveManager {
           souNames.add(TILESHEET_NAMES[idx - 1].toLowerCase());
         }
       }
+    }
+    if (souNames.size === 0) {
+      souNames.add('ma-in');
     }
     await Promise.all(
       Array.from(souNames).map((s) => addFile(`/map/${s}.sou`, `map/${s}.sou`))

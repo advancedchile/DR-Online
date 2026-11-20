@@ -175,14 +175,31 @@ EM_JS(void, js_start_core_preload, (), {
     };
 
     var apiBase = (typeof window !== 'undefined' && window.DR_API_BASE) ? window.DR_API_BASE : '';
+    if (!Module._pendingBundles) Module._pendingBundles = {};
     var prefetch = function(url, key) {
+        if (Module._loadedBundles[key] || Module._pendingBundles[key]) return;
+        Module._pendingBundles[key] = true;
         fetch(url, { method: 'GET' })
             .then(function(r) { return r.ok ? r.arrayBuffer() : null; })
-            .then(function(ab) { if (ab) Module._unpackBundleBuffer(ab, key); })
-            .catch(function() {});
+            .then(function(ab) {
+                Module._pendingBundles[key] = false;
+                if (ab) Module._unpackBundleBuffer(ab, key);
+            })
+            .catch(function() {
+                Module._pendingBundles[key] = false;
+            });
     };
     prefetch(apiBase + '/api/data0/bundle?pack=core', 'core');
     prefetch(apiBase + '/api/data0/bundle?pack=map&map=scholium', 'map:scholium');
+    prefetch(apiBase + '/api/data0/bundle?pack=map&map=scholium2', 'map:scholium2');
+});
+
+EM_JS(void, js_set_loading_status, (int active, int step, int total, const char* keyPtr), {
+    if (typeof window === 'undefined') return;
+    var key = keyPtr ? UTF8ToString(keyPtr) : '';
+    window.dispatchEvent(new CustomEvent('dr-loading-status', {
+        detail: { active: !!active, step: step, total: total, key: key }
+    }));
 });
 
 EM_JS(void, js_preload_map_bundle, (const char* mapPtr), {
@@ -207,7 +224,9 @@ EM_JS(void, js_preload_map_bundle, (const char* mapPtr), {
         } catch (e) {}
     }
 
-    if (!Module._loadedBundles['core']) {
+    var hasLig = false;
+    try { hasLig = !!FS.stat('/data/lig000.spr'); } catch (e) {}
+    if (!Module._loadedBundles['core'] && !hasLig) {
         fetchSyncBundle(apiBase + '/api/data0/bundle?pack=core', 'core');
     }
     var mapName = mapPtr ? UTF8ToString(mapPtr).trim().toLowerCase() : '';
@@ -222,6 +241,10 @@ extern "C" void dr_wasm_start_core_preload(void) {
 
 extern "C" void dr_wasm_preload_map_bundle(const char* mapName) {
     js_preload_map_bundle(mapName);
+}
+
+extern "C" void dr_wasm_set_loading_status(int active, int step, int total, const char* key) {
+    js_set_loading_status(active, step, total, key ? key : "");
 }
 
 extern "C" FILE* __real_fopen(const char* path, const char* mode);

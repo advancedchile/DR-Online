@@ -101,6 +101,39 @@ export class FirebaseGameDb {
     return null;
   }
 
+  public async loadAccount(accountKey: string): Promise<any | null> {
+    if (!this.isEnabled() || !accountKey) return null;
+    const safeKey = accountKey.trim().toLowerCase().replace(/[.#$\[\]\/]/g, '_');
+    try {
+      if (this.cfg.databaseUrl) {
+        const res = await fetch(this.rtdbUrl(`accounts/${encodeURIComponent(safeKey)}`));
+        if (res.ok) {
+          const data = await res.json();
+          if (data && typeof data === 'object') return data;
+        }
+      }
+    } catch (err) {
+      console.warn('[FirebaseGameDb] Failed to load account:', err);
+    }
+    return null;
+  }
+
+  public async saveAccount(accountKey: string, acc: any): Promise<void> {
+    if (!this.isEnabled() || !accountKey) return;
+    const safeKey = accountKey.trim().toLowerCase().replace(/[.#$\[\]\/]/g, '_');
+    try {
+      if (this.cfg.databaseUrl) {
+        await fetch(this.rtdbUrl(`accounts/${encodeURIComponent(safeKey)}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(acc)
+        });
+      }
+    } catch (err) {
+      console.warn('[FirebaseGameDb] Failed to save account:', err);
+    }
+  }
+
   public async saveAllAccounts(accountsObj: Record<string, any>): Promise<void> {
     if (!this.isEnabled()) return;
 

@@ -5,6 +5,8 @@ import originalSqlDb from '../data/originalSqlDatabase.json';
 import { Data0ArchiveManager } from './data0StreamPlugin';
 import { FirebaseGameDb } from './firebaseDb';
 
+const CMD_INVALID_ID = 1;
+const CMD_INVALID_PW = 2;
 const CMD_ACCEPT_CREATE = 13;
 const CMD_ACCEPT_DELETE = 15;
 const CMD_ACCESS_JOIN = 30;
@@ -109,6 +111,7 @@ export interface WasmCharacterRecord {
 interface WasmAccountRecord {
   id: string;
   email?: string;
+  emailVerified?: boolean;
   passwordHash?: string;
   createdAt?: string;
   nation: number;
@@ -422,7 +425,11 @@ export class WasmNetServer {
       }
       fs.writeFileSync(this.dbFilePath, JSON.stringify(obj, null, 2), 'utf8');
       if (this.firebaseDb.isEnabled()) {
-        void this.firebaseDb.saveAllAccounts(obj);
+        const activeKey = (this.activeSession.userId || '').toLowerCase();
+        const activeAcc = activeKey ? this.accounts.get(activeKey) : undefined;
+        if (activeAcc) {
+          void this.firebaseDb.saveAccount(activeKey, activeAcc);
+        }
       }
     } catch {
       // ignore
@@ -844,6 +851,84 @@ export class WasmNetServer {
     return out;
   }
 
+  public async handleSendAsync(rawBuf: Buffer): Promise<Buffer> {
+    const replies: Buffer[] = [];
+    let offset = 0;
+
+    while (offset + 7 <= rawBuf.length) {
+      const wireLen = rawBuf.readUInt16LE(offset);
+      const type = rawBuf.readInt16LE(offset + 2);
+      const size = rawBuf.readInt16LE(offset + 4);
+      const payloadStart = offset + 7;
+      const packetEnd = offset + 2 + (wireLen >= 5 ? wireLen : 5 + Math.max(0, size));
+      if (packetEnd > rawBuf.length) break;
+      const payload = rawBuf.subarray(payloadStart, Math.min(rawBuf.length, payloadStart + Math.max(0, size)));
+      offset = packetEnd;
+
+      if (type === CMD_ACCESS_LOGIN) {
+        await this.processAccessLoginAsync(payload, replies);
+      } else {
+        this.processPacket(type, payload, replies);
+      }
+    }
+
+    if (this.activeSession.pendingOutgoing.length > 0) {
+      replies.push(...this.activeSession.pendingOutgoing);
+      this.activeSession.pendingOutgoing = [];
+    }
+
+    return replies.length > 0 ? Buffer.concat(replies) : Buffer.alloc(0);
+  }
+
+  private async processAccessLoginAsync(payload: Buffer, replies: Buffer[]): Promise<void> {
+    // HSEL_INITIAL (24 bytes) + id[20] @ 24 + pw[20] @ 44
+    const idFromPacket = payload.length >= 44 ? readFixedString(payload, 24, 20).trim() : '';
+    const pwFromPacket = payload.length >= 64 ? readFixedString(payload, 44, 20) : '';
+    if (!idFromPacket) {
+      replies.push(framePacket(CMD_INVALID_ID, Buffer.alloc(0)));
+      return;
+    }
+
+    const key = idFromPacket.toLowerCase();
+    let acc: WasmAccountRecord | undefined;
+
+    // Always check Firebase RTDB in real time so newly registered/verified accounts work immediately
+    // and deleted/unregistered accounts are strictly rejected.
+    if (this.firebaseDb.isEnabled()) {
+      const remoteRaw = await this.firebaseDb.loadAccount(key);
+      if (remoteRaw && typeof remoteRaw === 'object') {
+        acc = this.normalizeAccount(remoteRaw, idFromPacket);
+        this.accounts.set(key, acc);
+      } else {
+        this.accounts.delete(key);
+        acc = undefined;
+      }
+    } else {
+      acc = this.accounts.get(key);
+    }
+
+    // 1. Account must exist (never auto-create on login)
+    if (!acc) {
+      replies.push(framePacket(CMD_INVALID_ID, Buffer.alloc(0)));
+      return;
+    }
+
+    // 2. Email must be verified via the confirmation email sent at registration
+    if (acc.emailVerified !== true) {
+      replies.push(framePacket(CMD_INVALID_ID, Buffer.alloc(0)));
+      return;
+    }
+
+    // 3. Password must match the account's password hash
+    if (!pwFromPacket || !acc.passwordHash || acc.passwordHash !== this.hashPassword(pwFromPacket)) {
+      replies.push(framePacket(CMD_INVALID_PW, Buffer.alloc(0)));
+      return;
+    }
+
+    this.activeSession.userId = acc.id;
+    replies.push(this.buildAcceptLoginPacket(acc));
+  }
+
   public handleSend(rawBuf: Buffer): Buffer {
     const replies: Buffer[] = [];
     let offset = 0;
@@ -882,11 +967,20 @@ export class WasmNetServer {
       }
 
       case CMD_ACCESS_LOGIN: {
-        // HSEL_INITIAL (24 bytes) + id[20] @ 24
-        const idFromPacket = payload.length >= 44 ? readFixedString(payload, 24, 20) : '';
-        const userId = idFromPacket || this.activeSession.userId || 'admin';
-        this.activeSession.userId = userId;
-        const acc = this.getOrCreateAccount(userId);
+        // Strict sync fallback (never auto-create accounts)
+        const idFromPacket = payload.length >= 44 ? readFixedString(payload, 24, 20).trim() : '';
+        const pwFromPacket = payload.length >= 64 ? readFixedString(payload, 44, 20) : '';
+        const key = idFromPacket.toLowerCase();
+        const acc = key ? this.accounts.get(key) : undefined;
+        if (!acc || acc.emailVerified !== true) {
+          replies.push(framePacket(CMD_INVALID_ID, Buffer.alloc(0)));
+          break;
+        }
+        if (!pwFromPacket || !acc.passwordHash || acc.passwordHash !== this.hashPassword(pwFromPacket)) {
+          replies.push(framePacket(CMD_INVALID_PW, Buffer.alloc(0)));
+          break;
+        }
+        this.activeSession.userId = acc.id;
         replies.push(this.buildAcceptLoginPacket(acc));
         break;
       }
